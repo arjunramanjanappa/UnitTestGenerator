@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "unit-test-generator",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run", "-f", "C:\\Users\\arjun\\IdeaProjects\\WYSWYG\\UnitTestGenerator\\pom.xml"],
+      "port": 8080
+    }
+  ]
+}

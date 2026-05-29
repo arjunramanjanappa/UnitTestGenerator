@@ -1,21 +1,14 @@
 package com.testgen.ui;
 
-import javafx.fxml.FXML;
-import javafx.scene.control.TextArea;
-import javafx.scene.control.Label;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.GetMapping;
 
-/**
- * Controller for the standalone preview window (optional pop-out).
- */
-@Component
+@Controller
 public class PreviewController {
 
-    @FXML private Label titleLabel;
-    @FXML private TextArea contentArea;
-
-    public void setContent(String title, String content) {
-        titleLabel.setText(title);
-        contentArea.setText(content);
+    /** Serves the main UI page. */
+    @GetMapping("/")
+    public String index() {
+        return "index";
     }
 }
