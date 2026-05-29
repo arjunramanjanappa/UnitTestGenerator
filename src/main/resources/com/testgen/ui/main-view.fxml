@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.*?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.text.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="com.testgen.ui.MainController"
+            prefWidth="1200" prefHeight="800"
+            style="-fx-font-family: 'Segoe UI', sans-serif; -fx-font-size: 13px;">
+
+    <!-- ── TOP: Title bar ── -->
+    <top>
+        <VBox style="-fx-background-color: #2C3E50; -fx-padding: 10 16 10 16;">
+            <Label text="Unit Test Generator — UFW Model"
+                   style="-fx-text-fill: white; -fx-font-size: 18px; -fx-font-weight: bold;"/>
+            <Label text="JUnit5 + Mockito + Apache Camel | Spring Boot"
+                   style="-fx-text-fill: #BDC3C7; -fx-font-size: 11px;"/>
+        </VBox>
+    </top>
+
+    <!-- ── LEFT: Config panel ── -->
+    <left>
+        <ScrollPane fitToWidth="true" prefWidth="340"
+                    style="-fx-background-color: #F8F9FA;">
+            <VBox spacing="12" style="-fx-padding: 14;">
+
+                <!-- Source path -->
+                <Label text="Source — src/main/java" style="-fx-font-weight: bold;"/>
+                <HBox spacing="6">
+                    <TextField fx:id="sourcePathField" HBox.hgrow="ALWAYS"
+                               promptText="e.g. C:\project\src\main\java"/>
+                    <Button fx:id="browseSourceBtn" text="Browse"
+                            onAction="#onBrowseSource"/>
+                </HBox>
+
+                <!-- Target path -->
+                <Label text="Target — src/test/java" style="-fx-font-weight: bold;"/>
+                <HBox spacing="6">
+                    <TextField fx:id="targetPathField" HBox.hgrow="ALWAYS"
+                               promptText="Auto-filled from source"/>
+                    <Button fx:id="browseTargetBtn" text="Browse"
+                            onAction="#onBrowseTarget"/>
+                </HBox>
+
+                <Separator/>
+
+                <!-- Filters -->
+                <Label text="Include Patterns (comma-separated)"
+                       style="-fx-font-weight: bold;"/>
+                <TextField fx:id="includePatternField"
+                           promptText="e.g. service, OrderService"/>
+
+                <Label text="Exclude Patterns (comma-separated)"
+                       style="-fx-font-weight: bold;"/>
+                <TextField fx:id="excludePatternField"
+                           promptText="e.g. Config, Constants, *Dto"/>
+
+                <Separator/>
+
+                <!-- Naming convention -->
+                <Label text="Test Naming Convention"
+                       style="-fx-font-weight: bold;"/>
+                <ComboBox fx:id="namingConventionCombo" maxWidth="Infinity"/>
+
+                <!-- Inheritance depth -->
+                <Label text="Inheritance Stub Depth"
+                       style="-fx-font-weight: bold;"/>
+                <HBox spacing="8" alignment="CENTER_LEFT">
+                    <Spinner fx:id="inheritanceDepthSpinner" prefWidth="70"/>
+                    <Label text="(0 = direct parent only)"
+                           style="-fx-text-fill: #666;"/>
+                </HBox>
+
+                <Separator/>
+
+                <!-- Options -->
+                <CheckBox fx:id="overwriteCheckBox" text="Overwrite existing tests"/>
+                <CheckBox fx:id="dryRunCheckBox" text="Dry-run (preview only, no files written)"/>
+
+                <Separator/>
+
+                <!-- Buttons -->
+                <Button fx:id="scanBtn" text="🔍  Scan Classes"
+                        maxWidth="Infinity" prefHeight="36"
+                        onAction="#onScan"
+                        style="-fx-background-color: #2980B9; -fx-text-fill: white; -fx-font-weight: bold;"/>
+
+                <Button fx:id="generateBtn" text="⚡  Generate Tests"
+                        maxWidth="Infinity" prefHeight="36"
+                        onAction="#onGenerate"
+                        style="-fx-background-color: #27AE60; -fx-text-fill: white; -fx-font-weight: bold;"/>
+
+                <Button fx:id="exportReportBtn" text="📄  Export Report"
+                        maxWidth="Infinity" prefHeight="32"
+                        onAction="#onExportReport"
+                        style="-fx-background-color: #8E44AD; -fx-text-fill: white;"/>
+
+            </VBox>
+        </ScrollPane>
+    </left>
+
+    <!-- ── CENTER: Split pane — tree + preview ── -->
+    <center>
+        <VBox>
+            <SplitPane dividerPositions="0.35" VBox.vgrow="ALWAYS">
+
+                <!-- Left pane: class tree -->
+                <VBox>
+                    <Label text="Scanned Classes"
+                           style="-fx-font-weight: bold; -fx-padding: 6 8 4 8; -fx-background-color: #ECF0F1;"/>
+                    <TreeView fx:id="classTreeView" VBox.vgrow="ALWAYS"/>
+                </VBox>
+
+                <!-- Right pane: preview -->
+                <VBox>
+                    <Label fx:id="previewLabel" text="Preview — click a class to preview generated test"
+                           style="-fx-font-weight: bold; -fx-padding: 6 8 4 8; -fx-background-color: #ECF0F1;"/>
+                    <TextArea fx:id="previewArea" VBox.vgrow="ALWAYS"
+                              editable="false"
+                              style="-fx-font-family: 'Consolas', monospace; -fx-font-size: 12px;"/>
+                </VBox>
+
+            </SplitPane>
+        </VBox>
+    </center>
+
+    <!-- ── BOTTOM: Progress + log + report ── -->
+    <bottom>
+        <VBox style="-fx-border-color: #CCC; -fx-border-width: 1 0 0 0;">
+            <!-- Progress row -->
+            <HBox spacing="10" style="-fx-padding: 6 12 4 12;" alignment="CENTER_LEFT">
+                <Label text="Progress:"/>
+                <ProgressBar fx:id="progressBar" prefWidth="300" prefHeight="18"/>
+                <Label fx:id="progressLabel" text="—" style="-fx-text-fill: #555;"/>
+            </HBox>
+
+            <!-- Log + Report in tab pane -->
+            <TabPane prefHeight="180" tabClosingPolicy="UNAVAILABLE">
+                <Tab text="Live Log">
+                    <TextArea fx:id="logArea" editable="false"
+                              style="-fx-font-family: 'Consolas', monospace; -fx-font-size: 11px;"/>
+                </Tab>
+                <Tab text="Report">
+                    <TextArea fx:id="reportArea" editable="false"
+                              style="-fx-font-family: 'Consolas', monospace; -fx-font-size: 11px;"/>
+                </Tab>
+            </TabPane>
+        </VBox>
+    </bottom>
+
+</BorderPane>

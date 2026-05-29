@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns="http://javafx.com/javafx"
+      xmlns:fx="http://javafx.com/fxml"
+      fx:controller="com.testgen.ui.PreviewController"
+      spacing="6" style="-fx-padding: 10;">
+
+    <Label fx:id="titleLabel" text="Preview"
+           style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+
+    <TextArea fx:id="contentArea" VBox.vgrow="ALWAYS"
+              editable="false" prefHeight="500"
+              style="-fx-font-family: 'Consolas', monospace; -fx-font-size: 12px;"/>
+
+</VBox>
