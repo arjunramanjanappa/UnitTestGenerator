@@ -11,7 +11,47 @@ Supports Spring Boot projects with inheritance-heavy BAU class designs.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| [v1.1](#v11) | 2026-05-30 | Replaced JavaFX UI with Spring Boot web UI — run with `mvn spring-boot:run` |
 | [v1.0](#v10) | 2026-05-30 | Initial release — full UFW generation, Camel, inheritance, JavaFX UI |
+
+---
+
+## v1.1
+
+### What Changed
+JavaFX removed entirely. The tool now runs as a standard Spring Boot web application — open **http://localhost:8080** in any browser.
+
+| Area | Before (v1.0) | After (v1.1) |
+|------|--------------|--------------|
+| Launch command | `mvn javafx:run` | `mvn spring-boot:run` |
+| UI runtime | JavaFX desktop window | Browser (`http://localhost:8080`) |
+| Dependencies | JavaFX 21 + OS classifiers | `spring-boot-starter-web` + Thymeleaf |
+| OS setup | Platform classifier required | None — works on any OS with JDK 21 |
+
+### How to Run (v1.1+)
+```bash
+mvn spring-boot:run
+# Then open: http://localhost:8080
+```
+
+### New API Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/` | Serves the UI |
+| `POST` | `/api/scan` | Scan source folder, return class list |
+| `POST` | `/api/generate` | Generate tests — streams progress via SSE |
+| `POST` | `/api/preview` | Preview generated test for a single class |
+| `GET` | `/api/report` | Fetch last generation report as JSON |
+| `GET` | `/api/report/download` | Download report as `.txt` |
+
+### UI Features (v1.1)
+- Left sidebar: source/target path, include/exclude filters, naming convention, inheritance depth, overwrite/dry-run toggles
+- **Scan** → populates class tree grouped by package
+- Click any class → dark preview panel shows the generated `ClassNameTest.java`
+- **Generate** → SSE-driven progress bar + live log updates in real time
+- Report tab: scanned / generated / skipped / failed counts
+- **Export Report** → downloads `test-gen-report.txt`
 
 ---
 
