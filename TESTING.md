@@ -32,6 +32,7 @@ target/unit-test-generator-1.0.0.jar
 ## 3. Launch the UI
 
 ```bash
+# Correct — use the JavaFX plugin, NOT mvn spring-boot:run
 mvn javafx:run
 ```
 
