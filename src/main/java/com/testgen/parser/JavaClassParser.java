@@ -2,10 +2,14 @@ package com.testgen.parser;
 
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.ImportDeclaration;
+import com.github.javaparser.ast.PackageDeclaration;
 import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.nodeTypes.NodeWithAnnotations;
+import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.ReferenceType;
+import com.github.javaparser.ast.type.Type;
 import com.testgen.classifier.ClassType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -29,11 +33,11 @@ public class JavaClassParser {
             CompilationUnit cu = StaticJavaParser.parse(filePath);
 
             String packageName = cu.getPackageDeclaration()
-                    .map(pd -> pd.getNameAsString())
+                    .map(PackageDeclaration::getNameAsString)
                     .orElse("");
 
             List<String> imports = cu.getImports().stream()
-                    .map(i -> i.getNameAsString())
+                    .map(ImportDeclaration::getNameAsString)
                     .toList();
 
             Optional<ClassOrInterfaceDeclaration> classDecl =
@@ -54,11 +58,11 @@ public class JavaClassParser {
             List<String> genericTypeParams = new ArrayList<>();
             if (!cls.getExtendedTypes().isEmpty()) {
                 cls.getExtendedTypes().get(0).getTypeArguments()
-                        .ifPresent(args -> args.forEach(a -> genericTypeParams.add(a.asString())));
+                        .ifPresent(args -> args.stream().map(Type::asString).forEach(genericTypeParams::add));
             }
 
             List<String> interfaces = cls.getImplementedTypes().stream()
-                    .map(t -> t.getNameAsString())
+                    .map(ClassOrInterfaceType::getNameAsString)
                     .toList();
 
             boolean hasLombok = imports.stream().anyMatch(i -> i.startsWith("lombok."));
@@ -100,7 +104,7 @@ public class JavaClassParser {
             String valueKey = "";
             if (isValue) {
                 valueKey = field.getAnnotationByName("Value")
-                        .map(a -> a.toString())
+                        .map(Object::toString)
                         .orElse("");
             }
 

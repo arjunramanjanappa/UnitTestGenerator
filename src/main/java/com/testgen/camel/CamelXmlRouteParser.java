@@ -20,7 +20,8 @@ public class CamelXmlRouteParser {
         List<CamelRouteMetadata> routes = new ArrayList<>();
         try (Stream<Path> stream = Files.walk(resourcesRoot)) {
             stream.filter(p -> p.toString().endsWith(".xml"))
-                  .forEach(xmlFile -> routes.addAll(parseFile(xmlFile)));
+                  .map(this::parseFile)
+                  .forEach(routes::addAll);
         } catch (Exception e) {
             log.warn("Could not scan XML routes under {}: {}", resourcesRoot, e.getMessage());
         }
