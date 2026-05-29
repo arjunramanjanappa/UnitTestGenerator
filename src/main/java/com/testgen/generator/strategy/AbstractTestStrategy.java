@@ -14,6 +14,60 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     protected NamingConvention convention = NamingConvention.TEST_METHOD_SCENARIO;
 
+    // ── Known AOP / proxy-based annotations ────────────────────────────────
+    // These annotations are silently inactive in pure Mockito (Unit) tests.
+    // The generator emits warnings in Unit and dedicated stubs in Functional.
+
+    private static final Set<String> SPRING_AOP_ANNOTATIONS = Set.of(
+            "Transactional", "Async", "Cacheable", "CacheEvict", "CachePut",
+            "CacheConfig", "Scheduled", "EventListener", "Retryable", "Recover"
+    );
+
+    private static final Set<String> SECURITY_ANNOTATIONS = Set.of(
+            "PreAuthorize", "PostAuthorize", "Secured", "RolesAllowed",
+            "PermitAll", "DenyAll"
+    );
+
+    private static final Set<String> VALIDATION_ANNOTATIONS = Set.of(
+            "Validated", "Valid"
+    );
+
+    // All well-known annotations — anything else on a method is treated as custom AOP
+    private static final Set<String> ALL_KNOWN_ANNOTATIONS;
+    static {
+        Set<String> known = new HashSet<>();
+        known.addAll(SPRING_AOP_ANNOTATIONS);
+        known.addAll(SECURITY_ANNOTATIONS);
+        known.addAll(VALIDATION_ANNOTATIONS);
+        // non-AOP framework annotations that don't need stubs
+        known.addAll(Set.of("Override", "Deprecated", "SuppressWarnings",
+                "PostConstruct", "PreDestroy", "Bean", "RequestMapping",
+                "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping",
+                "PathVariable", "RequestBody", "RequestParam", "ResponseBody",
+                "ResponseStatus", "ExceptionHandler", "RestController", "Controller",
+                "Service", "Repository", "Component", "Autowired", "Value",
+                "Qualifier", "Primary", "Lazy", "Scope", "Profile",
+                "NotNull", "NotBlank", "NotEmpty", "Size", "Min", "Max",
+                "Pattern", "Email", "Positive", "Negative", "AssertTrue", "AssertFalse"));
+        ALL_KNOWN_ANNOTATIONS = Collections.unmodifiableSet(known);
+    }
+
+    /** Returns AOP-relevant annotations on a method (Spring AOP + security + custom). */
+    private List<String> aopAnnotations(MethodMetadata mm) {
+        return mm.annotations().stream()
+                .filter(a -> SPRING_AOP_ANNOTATIONS.contains(a)
+                        || SECURITY_ANNOTATIONS.contains(a)
+                        || !ALL_KNOWN_ANNOTATIONS.contains(a))
+                .toList();
+    }
+
+    /** Category label for a single annotation name. */
+    private String annotationCategory(String annotation) {
+        if (SPRING_AOP_ANNOTATIONS.contains(annotation)) return "Spring AOP proxy";
+        if (SECURITY_ANNOTATIONS.contains(annotation))   return "Security interceptor";
+        return "Custom AOP/aspect";
+    }
+
     // ── Indentation helper ──────────────────────────────────────────────────
 
     protected String i(int n) {
@@ -243,6 +297,115 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
+    // ── AOP annotation awareness ────────────────────────────────────────────
+
+    /**
+     * Emits a single-line comment before a Unit test method when the source method
+     * carries AOP/proxy annotations that are inactive in pure Mockito tests.
+     */
+    protected String buildAopWarningComment(MethodMetadata mm, int indent) {
+        List<String> aop = aopAnnotations(mm);
+        if (aop.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (String ann : aop) {
+            sb.append(i(indent))
+              .append("// NOTE: @").append(ann).append(" (").append(annotationCategory(ann))
+              .append(") is NOT active in Unit layer — verify its behaviour in Functional/Wire\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Generates dedicated Functional-layer test stubs for every method that carries
+     * AOP/proxy annotations. These stubs run inside a Spring context where the
+     * proxy IS active, so the behaviour can actually be exercised.
+     */
+    protected String buildFunctionalAopTestMethods(ClassMetadata m, int indent) {
+        StringBuilder sb = new StringBuilder();
+        for (MethodMetadata mm : m.ownPublicMethods()) {
+            List<String> aop = aopAnnotations(mm);
+            if (aop.isEmpty() || mm.isProtected()) continue;
+
+            for (String ann : aop) {
+                String testName = convention.unitTestMethod(mm.name(), ann.toLowerCase() + "_behaviour");
+                sb.append(i(indent)).append("@Test\n");
+                sb.append(i(indent)).append("void ").append(testName).append("() {\n");
+                sb.append(i(indent + 1)).append("// @").append(ann)
+                  .append(" — ").append(annotationCategory(ann))
+                  .append(" is active here (Spring proxy wraps subject)\n");
+
+                if (SPRING_AOP_ANNOTATIONS.contains(ann)) {
+                    appendSpringAopStub(ann, mm, sb, indent + 1);
+                } else if (SECURITY_ANNOTATIONS.contains(ann)) {
+                    sb.append(i(indent + 1))
+                      .append("// TODO: call subject.").append(mm.name())
+                      .append("(...) with insufficient role → expect AccessDeniedException\n");
+                    sb.append(i(indent + 1))
+                      .append("// TODO: call subject.").append(mm.name())
+                      .append("(...) with correct role → expect success\n");
+                } else {
+                    // custom annotation
+                    sb.append(i(indent + 1))
+                      .append("// TODO: verify @").append(ann)
+                      .append(" aspect behaviour — e.g. audit log written, metric recorded\n");
+                    sb.append(i(indent + 1)).append("// subject.").append(mm.name())
+                      .append("(").append(buildDefaultParamArgs(mm)).append(");\n");
+                    sb.append(i(indent + 1))
+                      .append("// TODO: assert aspect side-effect\n");
+                }
+                sb.append(i(indent)).append("}\n\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    private void appendSpringAopStub(String ann, MethodMetadata mm, StringBuilder sb, int indent) {
+        String call = "subject." + mm.name() + "(" + buildDefaultParamArgs(mm) + ")";
+        switch (ann) {
+            case "Transactional" -> {
+                sb.append(i(indent)).append("// Verify transaction commits on success\n");
+                sb.append(i(indent)).append(call).append(";\n");
+                sb.append(i(indent)).append("// TODO: assert expected state after commit\n\n");
+                sb.append(i(indent)).append("// Verify transaction rolls back on exception\n");
+                sb.append(i(indent))
+                  .append("// TODO: configure mock to throw RuntimeException, then assertThrows\n");
+            }
+            case "Async" -> {
+                sb.append(i(indent)).append("// Async method — returns immediately; use CompletableFuture or CountDownLatch\n");
+                sb.append(i(indent)).append(call).append(";\n");
+                sb.append(i(indent)).append("// TODO: await async completion and assert side-effects\n");
+            }
+            case "Cacheable", "CachePut" -> {
+                sb.append(i(indent)).append("// First call — cache miss, real method executes\n");
+                sb.append(i(indent)).append(call).append(";\n");
+                sb.append(i(indent)).append("// Second call — cache hit, real method NOT invoked again\n");
+                sb.append(i(indent)).append(call).append(";\n");
+                sb.append(i(indent)).append("// TODO: verify(mockDep, times(1)).someMethod(any()); // called once despite two invocations\n");
+            }
+            case "CacheEvict" -> {
+                sb.append(i(indent)).append("// Populate cache, then call evict method\n");
+                sb.append(i(indent)).append(call).append(";\n");
+                sb.append(i(indent)).append("// TODO: assert subsequent cacheable call hits real method again\n");
+            }
+            case "Retryable" -> {
+                sb.append(i(indent)).append("// Configure mock to fail N-1 times then succeed\n");
+                sb.append(i(indent)).append("// TODO: doThrow(...).doReturn(...).when(mockDep).someMethod(any());\n");
+                sb.append(i(indent)).append(call).append(";\n");
+                sb.append(i(indent)).append("// TODO: verify(mockDep, times(/* retryCount */)).someMethod(any());\n");
+            }
+            default -> {
+                sb.append(i(indent)).append(call).append(";\n");
+                sb.append(i(indent)).append("// TODO: assert @").append(ann).append(" behaviour\n");
+            }
+        }
+    }
+
+    private String buildDefaultParamArgs(MethodMetadata mm) {
+        return mm.parameters().stream()
+                .map(p -> defaultValue(p.type()))
+                .collect(Collectors.joining(", "));
+    }
+
     // ── Test method generation ──────────────────────────────────────────────
 
     protected String buildTestMethods(ClassMetadata m, String subject, int indent) {
@@ -278,6 +441,9 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     protected String buildSingleTestMethod(MethodMetadata mm, String subject,
                                            ClassMetadata m, int indent) {
         StringBuilder sb = new StringBuilder();
+
+        // AOP warning — emitted before the @Test so the reader sees it immediately
+        sb.append(buildAopWarningComment(mm, indent));
 
         // Success test
         sb.append(i(indent)).append("@Test\n");

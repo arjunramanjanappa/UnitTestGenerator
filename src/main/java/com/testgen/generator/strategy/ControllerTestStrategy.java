@@ -104,6 +104,7 @@ public class ControllerTestStrategy extends AbstractTestStrategy {
                 sb.append(i(2)).append("}\n\n");
             }
         }
+        sb.append(buildFunctionalAopTestMethods(m, 2));
         sb.append(i(1)).append("}\n\n");
         return sb.toString();
     }

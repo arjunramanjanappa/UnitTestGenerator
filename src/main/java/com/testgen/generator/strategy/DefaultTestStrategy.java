@@ -72,7 +72,8 @@ public class DefaultTestStrategy extends AbstractTestStrategy {
         sb.append(i(2)).append("@Test\n");
         sb.append(i(2)).append("void contextLoads() {\n");
         sb.append(i(3)).append("// TODO: assert context loaded correctly\n");
-        sb.append(i(2)).append("}\n");
+        sb.append(i(2)).append("}\n\n");
+        sb.append(buildFunctionalAopTestMethods(m, 2));
         sb.append(i(1)).append("}\n\n");
 
         // Wire nested
