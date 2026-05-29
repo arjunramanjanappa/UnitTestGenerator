@@ -16,42 +16,40 @@ Supports Spring Boot projects with inheritance-heavy BAU class designs.
 
 ---
 
+## Quick Start
+
+```bash
+git clone https://github.com/arjunramanjanappa/UnitTestGenerator.git
+cd UnitTestGenerator
+mvn spring-boot:run
+```
+
+Open **http://localhost:8080** in your browser.
+
+---
+
 ## v1.1
 
 ### What Changed
-JavaFX removed entirely. The tool now runs as a standard Spring Boot web application — open **http://localhost:8080** in any browser.
+JavaFX removed entirely. The tool now runs as a standard Spring Boot web application.
 
-| Area | Before (v1.0) | After (v1.1) |
-|------|--------------|--------------|
+| Area | v1.0 | v1.1 |
+|------|------|------|
 | Launch command | `mvn javafx:run` | `mvn spring-boot:run` |
-| UI runtime | JavaFX desktop window | Browser (`http://localhost:8080`) |
+| UI runtime | JavaFX desktop window | Browser at `http://localhost:8080` |
 | Dependencies | JavaFX 21 + OS classifiers | `spring-boot-starter-web` + Thymeleaf |
 | OS setup | Platform classifier required | None — works on any OS with JDK 21 |
 
-### How to Run (v1.1+)
-```bash
-mvn spring-boot:run
-# Then open: http://localhost:8080
-```
-
-### New API Endpoints
+### API Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/` | Serves the UI |
+| `GET`  | `/` | Serves the UI |
 | `POST` | `/api/scan` | Scan source folder, return class list |
-| `POST` | `/api/generate` | Generate tests — streams progress via SSE |
+| `POST` | `/api/generate` | Generate tests — streams real-time progress via SSE |
 | `POST` | `/api/preview` | Preview generated test for a single class |
-| `GET` | `/api/report` | Fetch last generation report as JSON |
-| `GET` | `/api/report/download` | Download report as `.txt` |
-
-### UI Features (v1.1)
-- Left sidebar: source/target path, include/exclude filters, naming convention, inheritance depth, overwrite/dry-run toggles
-- **Scan** → populates class tree grouped by package
-- Click any class → dark preview panel shows the generated `ClassNameTest.java`
-- **Generate** → SSE-driven progress bar + live log updates in real time
-- Report tab: scanned / generated / skipped / failed counts
-- **Export Report** → downloads `test-gen-report.txt`
+| `GET`  | `/api/report` | Fetch last generation report as JSON |
+| `GET`  | `/api/report/download` | Download report as `.txt` |
 
 ---
 
@@ -76,7 +74,7 @@ mvn spring-boot:run
 | Feature | Detail |
 |---------|--------|
 | **Parent class stubbing** | Direct parent stubbed via `Mockito.spy()` + `doReturn()` on overridden methods |
-| **Inherited method skipping** | Non-overridden inherited methods excluded — covered by parent's own `ParentTest.java` |
+| **Inherited method skipping** | Non-overridden inherited methods excluded — covered by parent's own test |
 | **Protected methods** | Accessed via `ReflectionTestUtils.invokeMethod()` — BAU source classes never modified |
 | **Abstract classes** | Tested via `Mockito.mock(AbstractClass.class, CALLS_REAL_METHODS)` |
 | **`@PostConstruct` in parent** | Detected and flagged in `@BeforeEach` with a verification comment |
@@ -98,27 +96,21 @@ mvn spring-boot:run
 | **Functional tests** | `@CamelSpringBootTest` + `ProducerTemplate` |
 | **Wire tests** | Full context, asserts `camelContext.getRoutes()` is not empty |
 
-#### UI (JavaFX)
+#### Web UI (v1.1)
 | Feature | Detail |
 |---------|--------|
-| **Folder browser** | Browse buttons for source (`src/main/java`) and target (`src/test/java`) paths |
-| **Auto-fill target** | Target path auto-derived from source when typed |
+| **Folder browser** | Source and target path inputs with auto-fill |
 | **Include / Exclude filters** | Comma-separated package or class name patterns |
 | **Naming convention selector** | Dropdown to pick test method naming style |
-| **Inheritance depth spinner** | 0 = direct parent only, N = up to N levels |
+| **Inheritance depth spinner** | `0` = direct parent only, `N` = up to N levels |
 | **Dry-run checkbox** | Preview without writing |
 | **Overwrite checkbox** | Control whether existing tests are replaced |
-| **Scan** | Walks source tree, populates class tree view with package hierarchy |
-| **Class preview panel** | Click any class in the tree to preview the test that would be generated |
-| **Progress bar + live log** | Real-time file-by-file progress during generation |
+| **Scan** | Walks source tree, populates class tree grouped by package |
+| **Class preview panel** | Click any class to preview its generated test in a dark code panel |
+| **SSE progress bar** | Real-time file-by-file progress streamed from server |
+| **Live log tab** | Timestamped log entries streamed during generation |
 | **Report tab** | Post-run summary: scanned / generated / skipped / failed counts |
-| **Export report** | Save report as `.txt` file |
-
-#### Project Awareness
-| Feature | Detail |
-|---------|--------|
-| **Spring Boot version detection** | Reads target project's `pom.xml` to detect Spring Boot version |
-| **Lombok detection** | Detects `@Builder`, `@Data`, `@SuperBuilder` to switch `TestData` generation strategy |
+| **Export Report** | Download report as `.txt` file |
 
 ---
 
@@ -129,7 +121,7 @@ mvn spring-boot:run
 | Language | Java 21 |
 | Framework | Spring Boot 3.3.0 |
 | Source parsing | JavaParser 3.25.9 |
-| UI | JavaFX 21.0.2 |
+| UI | Thymeleaf + Bootstrap 5 (browser) |
 | Generated test runtime | JUnit 5, Mockito, Apache Camel Test |
 | Build | Maven |
 
@@ -139,55 +131,68 @@ mvn spring-boot:run
 
 - JDK 21+
 - Maven 3.8+
-- JavaFX 21 (bundled via Maven dependency — no separate install needed)
 
 ---
 
-### How to Build
+### Project Structure
 
-```bash
-git clone https://github.com/arjunramanjanappa/UnitTestGenerator.git
-cd UnitTestGenerator
-mvn clean package -DskipTests
 ```
+src/main/java/com/testgen/
+├── ui/
+│   ├── TestGeneratorUIApp.java      ← Spring Boot main + @EnableAsync
+│   ├── MainController.java          ← REST API (/api/scan, /api/generate, ...)
+│   └── PreviewController.java       ← Serves GET / → index.html
+├── scanner/FileScanner.java         ← Walks src/main/java with include/exclude
+├── parser/
+│   ├── ClassMetadata.java           ← Parsed class model (record)
+│   ├── FieldMetadata.java           ← Field model — injection, @Value, AppCtx detection
+│   ├── MethodMetadata.java          ← Method model — override, abstract, throws
+│   └── JavaClassParser.java         ← JavaParser AST → ClassMetadata
+├── classifier/
+│   ├── ClassType.java               ← Enum: SERVICE, CONTROLLER, CAMEL_ROUTE, ...
+│   └── ClassClassifier.java         ← Annotation-based class type detection
+├── camel/
+│   ├── CamelRouteMetadata.java      ← Route ID, from/to URIs, source type
+│   └── CamelXmlRouteParser.java     ← DOM parser for Camel XML routes
+├── generator/
+│   ├── GeneratedTest.java           ← Output record (fileName, packageName, content)
+│   ├── NamingConvention.java        ← 3 test naming styles (enum)
+│   ├── TestOrchestrator.java        ← Main pipeline: scan→parse→classify→generate→write
+│   ├── strategy/
+│   │   ├── TestStrategy.java        ← Interface
+│   │   ├── AbstractTestStrategy.java← Shared code-gen helpers (mocks, stubs, methods)
+│   │   ├── ServiceTestStrategy.java
+│   │   ├── ControllerTestStrategy.java
+│   │   ├── RepositoryTestStrategy.java
+│   │   ├── CamelRouteTestStrategy.java
+│   │   ├── ComponentTestStrategy.java
+│   │   └── DefaultTestStrategy.java ← POJO, Config, Abstract
+│   └── builder/DataBuilderGenerator.java ← *TestData.java (Lombok-aware)
+├── writer/TestFileWriter.java       ← Writes to src/test/java, overwrite-aware
+└── report/GenerationReport.java     ← Summary text + file export
 
----
-
-### How to Run
-
-#### Option A — JavaFX UI (recommended)
-```bash
-mvn javafx:run
-```
-
-#### Option B — Run the packaged jar
-```bash
-java --module-path /path/to/javafx-sdk/lib \
-     --add-modules javafx.controls,javafx.fxml \
-     -jar target/unit-test-generator-1.0.0.jar
+src/main/resources/
+├── templates/index.html             ← Bootstrap 5 SPA (scan, generate, preview, report)
+└── application.properties
 ```
 
 ---
 
 ### How to Use (Step-by-Step)
 
-1. **Launch** the application via `mvn javafx:run`
-2. **Enter Source Path** — point to the target project's `src/main/java`  
-   _(e.g. `C:\myproject\src\main\java`)_
-3. **Enter Target Path** — auto-filled as `src/test/java`; adjust if needed
-4. **Set Filters** _(optional)_
-   - Include: `com.example.service` to only generate for that package
-   - Exclude: `Config,Constants,Dto` to skip those classes
-5. **Pick Naming Convention** — choose from dropdown
-6. **Set Inheritance Depth** — `1` means stub only the direct parent (recommended default)
-7. **Toggle options**
-   - ☑ Overwrite — replaces existing test files
-   - ☐ Dry-run — preview only, nothing written to disk
-8. **Click Scan** — tree view populates with all discovered classes
-9. **Click any class** in the tree to preview its generated test in the right panel
-10. **Click Generate Tests** — progress bar and live log show real-time progress
-11. **Review the Report tab** — see counts of generated / skipped / failed
-12. **Click Export Report** to save the summary as a `.txt` file
+1. **Start** the app: `mvn spring-boot:run`
+2. **Open** `http://localhost:8080`
+3. **Enter Source Path** — target project's `src/main/java`
+4. **Enter Target Path** — auto-filled as `src/test/java`
+5. **Set Filters** _(optional)_ — include/exclude by package or class name
+6. **Pick Naming Convention** — from dropdown
+7. **Set Inheritance Depth** — `1` stubs only direct parent (recommended)
+8. **Toggle options** — Overwrite / Dry-run
+9. **Click Scan** — class tree populates grouped by package
+10. **Click any class** — preview panel shows the generated test
+11. **Click Generate Tests** — progress bar + live log update in real time
+12. **Review Report tab** — counts of generated / skipped / failed
+13. **Export Report** — saves summary as `.txt`
 
 ---
 
@@ -196,89 +201,38 @@ java --module-path /path/to/javafx-sdk/lib \
 Given `com.example.service.OrderService`:
 
 ```
-src/test/java/
-└── com/example/service/
-    ├── OrderServiceTest.java       ← UFW @Nested Unit / Functional / Wire
-    └── OrderServiceTestData.java   ← Test data builder
+src/test/java/com/example/service/
+├── OrderServiceTest.java       ← @Nested Unit / Functional / Wire
+└── OrderServiceTestData.java   ← Test data builder
 ```
-
-#### Sample `OrderServiceTest.java` structure
-
-```java
-class OrderServiceTest {
-
-    @Nested
-    @ExtendWith(MockitoExtension.class)
-    class Unit {
-        @Mock OrderRepository orderRepository;
-        @InjectMocks OrderService subject;
-
-        @BeforeEach void setUp() { ... }
-
-        @Test void test_createOrder_success() { ... }
-        @Test void test_createOrder_throwsOrderException() { ... }
-        @ParameterizedTest @CsvSource(...) void test_createOrder_parameterized(...) { ... }
-    }
-
-    @Nested
-    @SpringBootTest(classes = {OrderService.class})
-    class Functional {
-        @MockBean OrderRepository orderRepository;
-        @Autowired OrderService subject;
-        @Test void test_createOrder_functional() { ... }
-    }
-
-    @Nested
-    @SpringBootTest
-    @ActiveProfiles("test")
-    class Wire {
-        @Autowired OrderService subject;
-        @Test void contextLoads() { ... }
-    }
-}
-```
-
----
 
 ### Inheritance Example
 
-Given `OrderService extends BaseService`:
-
 ```java
+// OrderService extends BaseService
 class OrderServiceTest {
-    @Nested
-    class Unit {
-        @Spy BaseService parent;           // parent spied — not re-tested here
+    @Nested class Unit {
+        @Spy BaseService parent;         // direct parent spied
         @InjectMocks OrderService subject;
 
-        @BeforeEach void setUp() {
-            // Inherited methods covered by BaseServiceTest
-            // doReturn(...).when(subject).overriddenMethod(...); // stub overrides
-        }
-
-        // Only tests OrderService's own + overridden methods
-        // Inherited-non-overridden → skipped (BaseServiceTest covers them)
+        // Overridden methods tested here
+        // Inherited-non-overridden → skipped (covered by BaseServiceTest)
     }
 }
 ```
 
----
-
 ### Camel Route Example
-
-Given `OrderRoute extends RouteBuilder` with `routeId("order-route")`:
 
 ```java
 class OrderRouteTest {
-    @Nested
-    class Unit extends CamelTestSupport {
+    @Nested class Unit extends CamelTestSupport {
         @Test void test_order_route_success() throws Exception {
             AdviceWith.adviceWith(context, "order-route", a -> {
                 a.replaceFromWith("direct:start");
                 a.mockEndpoints("*");
             });
-            MockEndpoint mockEnd = getMockEndpoint("mock:...");
-            mockEnd.expectedMessageCount(1);
+            MockEndpoint mock = getMockEndpoint("mock:...");
+            mock.expectedMessageCount(1);
             template.sendBody("direct:start", "test body");
             MockEndpoint.assertIsSatisfied(context);
         }
@@ -292,4 +246,4 @@ class OrderRouteTest {
 
 | Version | Planned |
 |---------|---------|
-| v1.1 | _(next increment — TBD)_ |
+| v1.2 | _(next increment — TBD)_ |
