@@ -3,6 +3,8 @@
 Auto-generates **JUnit 5 + Mockito + Apache Camel** test cases for Java classes using the **UFW (Unit / Functional / Wire)** model.  
 Supports Spring Boot projects with inheritance-heavy BAU class designs.
 
+> **Testing Guide** → [TESTING.md](TESTING.md) — step-by-step verification for every class type, edge cases, and regression checklist.
+
 ---
 
 ## Version History
