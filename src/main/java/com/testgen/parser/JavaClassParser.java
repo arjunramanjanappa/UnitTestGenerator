@@ -6,6 +6,8 @@ import com.github.javaparser.ast.ImportDeclaration;
 import com.github.javaparser.ast.PackageDeclaration;
 import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.expr.AnnotationExpr;
+import com.github.javaparser.ast.expr.MethodCallExpr;
+import com.github.javaparser.ast.expr.SuperExpr;
 import com.github.javaparser.ast.nodeTypes.NodeWithAnnotations;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.ReferenceType;
@@ -135,6 +137,14 @@ public class JavaClassParser {
                             p.getTypeAsString(), p.getNameAsString()))
                     .toList();
 
+            List<String> superCalls = method.findAll(MethodCallExpr.class).stream()
+                    .filter(call -> call.getScope()
+                            .filter(s -> s instanceof SuperExpr)
+                            .isPresent())
+                    .map(MethodCallExpr::getNameAsString)
+                    .distinct()
+                    .toList();
+
             result.add(new MethodMetadata(
                     method.getNameAsString(),
                     method.getTypeAsString(),
@@ -142,7 +152,8 @@ public class JavaClassParser {
                     method.isPublic(), method.isProtected(),
                     method.isStatic(), method.isAbstract(), method.isFinal(),
                     annotations.contains("Override"),
-                    false
+                    false,
+                    superCalls
             ));
         }
         return result;

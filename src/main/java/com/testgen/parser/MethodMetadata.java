@@ -14,7 +14,8 @@ public record MethodMetadata(
         boolean isAbstract,
         boolean isFinal,
         boolean isOverride,
-        boolean isConstructor
+        boolean isConstructor,
+        List<String> superMethodCalls  // super.xxx() calls found in method body
 ) {
     public boolean hasReturnValue() {
         return !"void".equals(returnType);
@@ -26,6 +27,10 @@ public record MethodMetadata(
 
     public boolean isTestable() {
         return (isPublic || isProtected) && !isConstructor && !isStatic;
+    }
+
+    public boolean hasSuperCalls() {
+        return superMethodCalls != null && !superMethodCalls.isEmpty();
     }
 
     public record ParameterMetadata(String type, String name) {}

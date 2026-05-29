@@ -133,6 +133,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * Stubs overridden parent methods using Mockito spy + doReturn.
      * Only the overridden subset is stubbed; non-overridden inherited methods
      * are intentionally skipped — they are covered by the parent's own test.
+     *
+     * For overridden methods that contain super.xxx() calls, an additional stub
+     * is emitted on `parent` so the spy intercepts the delegation instead of
+     * executing the real ClassB implementation.
      */
     protected String buildSuperClassStubs(ClassMetadata m, int indent) {
         if (!m.hasSuperClass()) return "";
@@ -141,18 +145,45 @@ public abstract class AbstractTestStrategy implements TestStrategy {
           .append(" — non-overridden inherited methods covered by ").append(m.superClassName()).append("Test\n");
 
         for (MethodMetadata mm : m.overriddenMethods()) {
-            String params = mm.parameters().stream()
+            String matcherParams = mm.parameters().stream()
                     .map(p -> "any(" + p.type() + ".class)")
                     .collect(Collectors.joining(", "));
+
+            // Stub on subject (ClassA) to control what the overriding method returns
             if (mm.hasReturnValue()) {
                 sb.append(i(indent))
                   .append("// doReturn(").append(defaultValue(mm.returnType()))
-                  .append(").when(subject).").append(mm.name()).append("(").append(params)
-                  .append("); // stub parent behaviour for overridden method\n");
+                  .append(").when(subject).").append(mm.name()).append("(").append(matcherParams)
+                  .append("); // stub overridden method on ClassA\n");
             } else {
                 sb.append(i(indent))
-                  .append("// doNothing().when(subject).").append(mm.name()).append("(").append(params)
-                  .append("); // stub void overridden method\n");
+                  .append("// doNothing().when(subject).").append(mm.name()).append("(").append(matcherParams)
+                  .append("); // stub void overridden method on ClassA\n");
+            }
+
+            // If the method body calls super.xxx(), also stub the parent spy so the
+            // real ClassB implementation is never invoked during the test
+            if (mm.hasSuperCalls()) {
+                for (String superCall : mm.superMethodCalls()) {
+                    if (mm.name().equals(superCall)) {
+                        // super.sameMethod() — stub on parent directly
+                        if (mm.hasReturnValue()) {
+                            sb.append(i(indent))
+                              .append("doReturn(").append(defaultValue(mm.returnType()))
+                              .append(").when(parent).").append(superCall).append("(").append(matcherParams)
+                              .append("); // intercept super.").append(superCall).append("() — prevents real ").append(m.superClassName()).append(" execution\n");
+                        } else {
+                            sb.append(i(indent))
+                              .append("doNothing().when(parent).").append(superCall).append("(").append(matcherParams)
+                              .append("); // intercept super.").append(superCall).append("() — prevents real ").append(m.superClassName()).append(" execution\n");
+                        }
+                    } else {
+                        // super.differentMethod() — stub on parent, return type unknown so use lenient stub
+                        sb.append(i(indent))
+                          .append("// TODO: stub super.").append(superCall).append("() on parent — ")
+                          .append("determine return type and add: doReturn(...).when(parent).").append(superCall).append("(...);\n");
+                    }
+                }
             }
         }
         return sb.toString();
