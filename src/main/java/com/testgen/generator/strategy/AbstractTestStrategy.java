@@ -333,9 +333,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .filter(FieldMetadata::isApplicationContext)
                 .map(FieldMetadata::name)
                 .findFirst().orElse("applicationContext");
-        return i(indent) + "when(" + field + ".getBean(any(Class.class))).thenReturn(mock(Object.class));\n"
-             + i(indent) + "when(" + field + ".getBean(anyString(), any(Class.class))).thenReturn(mock(Object.class));\n"
-             + i(indent) + "when(" + field + ".containsBean(anyString())).thenReturn(true);\n";
+        // lenient() — Mockito 5 strict stubbing: these may not be called by every test method
+        return i(indent) + "lenient().when(" + field + ".getBean(any(Class.class))).thenReturn(mock(Object.class));\n"
+             + i(indent) + "lenient().when(" + field + ".getBean(anyString(), any(Class.class))).thenReturn(mock(Object.class));\n"
+             + i(indent) + "lenient().when(" + field + ".containsBean(anyString())).thenReturn(true);\n";
     }
 
     // ── Parent-class (BAU inheritance) stubs ────────────────────────────────
@@ -373,15 +374,16 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             if (mm.hasSuperCalls()) {
                 for (String superCall : mm.superMethodCalls()) {
                     if (mm.name().equals(superCall)) {
+                        // lenient() — Mockito 5 strict stubbing: not every test exercises this super call path
                         if (mm.hasReturnValue()) {
                             sb.append(i(indent))
-                              .append("doReturn(").append(defaultValue(mm.returnType()))
+                              .append("lenient().doReturn(").append(defaultValue(mm.returnType()))
                               .append(").when(parent).").append(superCall).append("(").append(matcherParams)
                               .append("); // intercept super.").append(superCall)
                               .append("() — prevents real ").append(m.superClassName()).append(" execution\n");
                         } else {
                             sb.append(i(indent))
-                              .append("doNothing().when(parent).").append(superCall).append("(").append(matcherParams)
+                              .append("lenient().doNothing().when(parent).").append(superCall).append("(").append(matcherParams)
                               .append("); // intercept super.").append(superCall)
                               .append("() — prevents real ").append(m.superClassName()).append(" execution\n");
                         }
