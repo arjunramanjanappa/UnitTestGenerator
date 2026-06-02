@@ -551,7 +551,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                   .append(" is active here (Spring proxy wraps subject)\n");
 
                 if (SPRING_AOP_ANNOTATIONS.contains(ann)) {
-                    appendSpringAopStub(ann, mm, sb, indent + 1);
+                    appendSpringAopStub(ann, mm, sb, indent + 1, m);
                 } else if (SECURITY_ANNOTATIONS.contains(ann)) {
                     sb.append(i(indent + 1))
                       .append("// TODO: call subject.").append(mm.name())
@@ -565,7 +565,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                       .append("// TODO: verify @").append(ann)
                       .append(" aspect behaviour — e.g. audit log written, metric recorded\n");
                     sb.append(i(indent + 1)).append("// subject.").append(mm.name())
-                      .append("(").append(buildDefaultParamArgs(mm)).append(");\n");
+                      .append("(").append(buildDefaultParamArgs(mm, m.concreteClassNames())).append(");\n");
                     sb.append(i(indent + 1))
                       .append("// TODO: assert aspect side-effect\n");
                 }
@@ -575,8 +575,9 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
-    private void appendSpringAopStub(String ann, MethodMetadata mm, StringBuilder sb, int indent) {
-        String call = "subject." + mm.name() + "(" + buildDefaultParamArgs(mm) + ")";
+    private void appendSpringAopStub(String ann, MethodMetadata mm, StringBuilder sb, int indent,
+                                      ClassMetadata m) {
+        String call = "subject." + mm.name() + "(" + buildDefaultParamArgs(mm, m.concreteClassNames()) + ")";
         switch (ann) {
             case "Transactional" -> {
                 // Surface @Transactional attribute values from the annotation if available
@@ -625,8 +626,20 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     }
 
     private String buildDefaultParamArgs(MethodMetadata mm) {
+        return buildDefaultParamArgs(mm, null);
+    }
+
+    private String buildDefaultParamArgs(MethodMetadata mm, Set<String> concreteClassNames) {
         return mm.parameters().stream()
-                .map(p -> defaultValue(p.type()))
+                .map(p -> {
+                    String raw   = p.type().replaceAll("<.*>", "").trim();
+                    String value = defaultValue(p.type());
+                    if (value.startsWith("null") && concreteClassNames != null
+                            && concreteClassNames.contains(raw)) {
+                        return raw + "TestData.buildValid" + raw + "()";
+                    }
+                    return value;
+                })
                 .collect(Collectors.joining(", "));
     }
 
@@ -687,7 +700,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
           .append(convention.unitTestMethod(mm.name(), "success"))
           .append("()").append(throwsClause).append(" {\n");
         sb.append(i(indent + 1)).append("// given\n");
-        buildParamSetup(mm, sb, indent + 1);
+        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames());
 
         if (mm.isProtected()) {
             sb.append(i(indent + 1)).append("// when — protected access via ReflectionTestUtils (BAU class not modified)\n");
@@ -708,7 +721,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
         // Exception tests
         for (String ex : mm.thrownExceptions()) {
-            sb.append(buildExceptionTestMethod(mm, subject, ex, indent));
+            sb.append(buildExceptionTestMethod(mm, subject, ex, indent, m));
         }
 
         // @ParameterizedTest for primitive / String params
@@ -722,14 +735,14 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     }
 
     protected String buildExceptionTestMethod(MethodMetadata mm, String subject,
-                                              String exType, int indent) {
+                                              String exType, int indent, ClassMetadata m) {
         StringBuilder sb = new StringBuilder();
         sb.append(i(indent)).append("@Test\n");
         // Exception test: assertThrows wraps the call in a lambda — no throws clause needed
         sb.append(i(indent)).append("void ")
           .append(convention.exceptionTestMethod(mm.name(), exType)).append("() {\n");
         sb.append(i(indent + 1)).append("// given\n");
-        buildParamSetup(mm, sb, indent + 1);
+        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames());
 
         // Specific doThrow stub wired to the exact exception type
         sb.append(i(indent + 1))
@@ -789,15 +802,29 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     // ── Private helpers ─────────────────────────────────────────────────────
 
-    private void buildParamSetup(MethodMetadata mm, StringBuilder sb, int indent) {
+    /**
+     * Generates local variable declarations for each method parameter.
+     *
+     * For domain object types (non-primitive, non-standard):
+     *  - If the type is found in concreteClassNames (i.e. scanned from the source root
+     *    and will have a companion *TestData.java generated), reference the TestData builder.
+     *  - Otherwise fall back to null with a TODO comment — avoids referencing a TestData
+     *    class that doesn't exist (e.g. external library types like MSBaseVO from a shared jar).
+     */
+    private void buildParamSetup(MethodMetadata mm, StringBuilder sb, int indent,
+                                  Set<String> concreteClassNames) {
         for (MethodMetadata.ParameterMetadata p : mm.parameters()) {
             String rawType   = p.type().replaceAll("<.*>", "").trim();
             String value     = defaultValue(p.type());
             boolean isDomain = value.startsWith("null"); // non-primitive, non-standard type
             sb.append(i(indent)).append(p.type()).append(" ").append(p.name()).append(" = ");
-            if (isDomain) {
-                // Reference the companion TestData builder so tests have a real object, not null
+            if (isDomain && concreteClassNames != null && concreteClassNames.contains(rawType)) {
+                // Type is in the source root — its TestData file will be generated
                 sb.append(rawType).append("TestData.buildValid").append(rawType).append("();\n");
+            } else if (isDomain) {
+                // External / unknown type — TestData may not exist; leave as null with TODO
+                sb.append("null; // TODO: provide ").append(rawType)
+                  .append(" — if ").append(rawType).append("TestData exists, use .buildValid").append(rawType).append("()\n");
             } else {
                 sb.append(value).append(";\n");
             }
