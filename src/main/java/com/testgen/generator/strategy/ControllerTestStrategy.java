@@ -49,31 +49,28 @@ public class ControllerTestStrategy extends AbstractTestStrategy {
 
         sb.append(i(2)).append("private MockMvc mockMvc;\n\n");
         sb.append(buildMockDeclarations(m, 2));
-        sb.append(i(2)).append("private ").append(cls).append(" subject;\n\n");
+        sb.append(buildSubjectDeclaration(m, 2));
 
         sb.append(i(2)).append("@BeforeEach\n");
         sb.append(i(2)).append("void setUp() {\n");
-        sb.append(i(3)).append(m.className()).append(" rawInstance = new ").append(m.className()).append("();\n");
-        sb.append(i(3)).append("subject = spy(rawInstance);\n");
-        // inject mocks
-        for (var f : m.mockCandidates()) {
-            if (!f.isApplicationContext()) {
-                sb.append(i(3)).append("ReflectionTestUtils.setField(subject, \"")
-                  .append(f.name()).append("\", ").append(f.name()).append(");\n");
+        if (requiresSpyPattern(m)) {
+            sb.append(i(3)).append(m.className()).append(" rawInstance = new ").append(m.className()).append("();\n");
+            sb.append(i(3)).append("subject = spy(rawInstance);\n");
+            for (var f : m.mockCandidates()) {
+                if (!f.isApplicationContext() && !f.isConstructorInjected()) {
+                    sb.append(i(3)).append("ReflectionTestUtils.setField(subject, \"")
+                      .append(f.name()).append("\", ").append(f.name()).append(");\n");
+                }
             }
+            if (m.hasSuperClass()) sb.append(buildSuperClassStubs(m, 3));
+            sb.append(buildHelperMethodStubs(m, "subject", 3));
         }
         sb.append(i(3)).append("mockMvc = MockMvcBuilders.standaloneSetup(subject).build();\n");
         for (var f : m.valueFields()) {
             sb.append(i(3)).append("ReflectionTestUtils.setField(subject, \"")
               .append(f.name()).append("\", \"testValue\");\n");
         }
-        if (m.hasApplicationContext()) {
-            sb.append(buildAppCtxStubs(m, 3));
-        }
-        if (m.hasSuperClass()) {
-            sb.append(buildSuperClassStubs(m, 3));
-        }
-        sb.append(buildHelperMethodStubs(m, "subject", 3));
+        if (m.hasApplicationContext()) sb.append(buildAppCtxStubs(m, 3));
         sb.append(i(2)).append("}\n\n");
 
         for (MethodMetadata mm : m.ownPublicMethods()) {

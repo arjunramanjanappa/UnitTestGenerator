@@ -431,29 +431,75 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     // ── @BeforeEach ─────────────────────────────────────────────────────────
 
     /**
-     * Spy-based @BeforeEach (model: spy subject, inject mocks via ReflectionTestUtils).
+     * Determines whether to use spy() or @InjectMocks for the Unit nested class.
      *
-     * Pattern: spy(new ClassName()) so the subject's own methods can be stubbed
-     * to isolate internal helpers / superclass delegation from the logic under test.
+     * spy() is required when:
+     *   - Class has a parent (need to stub ALL inherited methods on spy)
+     *   - Class has internal helper methods (populate/build/etc.) that must be stubbed
+     *
+     * @InjectMocks is sufficient when neither of the above applies:
+     *   - Simple class, no superclass, no helpers
+     *   - Mockito handles injection automatically — works even without no-arg constructor
+     */
+    protected boolean requiresSpyPattern(ClassMetadata m) {
+        if (m.hasSuperClass()) return true;
+        return m.methods().stream().anyMatch(MethodMetadata::hasHelperCalls);
+    }
+
+    /**
+     * Emits the subject field declaration for the Unit class.
+     * When @InjectMocks is used, also emits the @InjectMocks annotation.
+     */
+    protected String buildSubjectDeclaration(ClassMetadata m, int indent) {
+        if (requiresSpyPattern(m)) {
+            // Spy: declared as plain field, initialised in @BeforeEach
+            return i(indent) + "private " + m.className() + " subject;\n\n";
+        } else {
+            // @InjectMocks: Mockito handles injection (constructor / field / setter)
+            return i(indent) + "@InjectMocks\n"
+                 + i(indent) + "private " + m.className() + " subject;\n\n";
+        }
+    }
+
+    /**
+     * Smart @BeforeEach:
+     *  - spy(new Class()) + ReflectionTestUtils injection  when spy pattern required
+     *  - bare setUp() with stubs only                      when @InjectMocks is used
      */
     protected String buildBeforeEach(ClassMetadata m, String subject, boolean usesMockBeans, int indent) {
         StringBuilder sb = new StringBuilder();
+        boolean useSpy = !usesMockBeans && requiresSpyPattern(m);
+
         sb.append(i(indent)).append("@BeforeEach\n");
         sb.append(i(indent)).append("void setUp() {\n");
 
-        if (!usesMockBeans) {
-            // Create subject as spy so internal helpers and super calls can be stubbed
-            sb.append(i(indent + 1)).append(m.className()).append(" rawInstance = new ").append(m.className()).append("();\n");
+        if (useSpy) {
+            // Spy pattern: instantiate and wrap
+            sb.append(i(indent + 1)).append("// spy() required: class has superclass or internal helper methods\n");
+
+            // Constructor injection: spy(new Class(dep1, dep2))
+            List<FieldMetadata> ctorFields = m.mockCandidates().stream()
+                    .filter(FieldMetadata::isConstructorInjected).toList();
+            if (!ctorFields.isEmpty()) {
+                String ctorArgs = ctorFields.stream()
+                        .map(FieldMetadata::name).collect(Collectors.joining(", "));
+                sb.append(i(indent + 1)).append(m.className()).append(" rawInstance = new ")
+                  .append(m.className()).append("(").append(ctorArgs).append(");\n");
+            } else {
+                sb.append(i(indent + 1)).append(m.className()).append(" rawInstance = new ")
+                  .append(m.className()).append("();\n");
+            }
             sb.append(i(indent + 1)).append(subject).append(" = spy(rawInstance);\n\n");
 
-            // Inject mocks into spy via ReflectionTestUtils (BAU field injection — never modify source)
+            // Field-injected mocks via ReflectionTestUtils (BAU field injection)
             for (FieldMetadata f : m.mockCandidates()) {
-                if (!f.isApplicationContext()) {
+                if (!f.isApplicationContext() && !f.isConstructorInjected()) {
                     sb.append(i(indent + 1)).append("ReflectionTestUtils.setField(").append(subject)
                       .append(", \"").append(f.name()).append("\", ").append(f.name()).append(");\n");
                 }
             }
         }
+        // For @InjectMocks: Mockito extension handles injection — nothing to do here
 
         // @Value fields
         for (FieldMetadata f : m.valueFields()) {
@@ -468,11 +514,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         // Repository stubs
         sb.append(buildRepositoryStubs(m, indent + 1));
 
-        if (!usesMockBeans) {
-            // Stub internal helper methods on the spy (Pattern D)
+        if (useSpy) {
+            // Stub internal helpers on spy (Pattern D)
             sb.append(buildHelperMethodStubs(m, subject, indent + 1));
-
-            // Stub super calls on spy (Pattern B)
+            // Stub all parent methods on spy (Patterns A/B)
             if (m.hasSuperClass()) {
                 sb.append(buildSuperClassStubs(m, indent + 1));
             }

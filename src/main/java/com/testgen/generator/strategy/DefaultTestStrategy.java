@@ -43,7 +43,7 @@ public class DefaultTestStrategy extends AbstractTestStrategy {
             sb.append(i(2)).append("}\n\n");
         } else {
             sb.append(buildMockDeclarations(m, 2));
-            sb.append(i(2)).append("private ").append(cls).append(" subject;\n\n");
+            sb.append(buildSubjectDeclaration(m, 2));
             sb.append(buildBeforeEach(m, "subject", false, 2));
         }
 
