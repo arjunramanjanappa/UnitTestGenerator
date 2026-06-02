@@ -439,6 +439,9 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             sb.append(buildAppCtxStubs(m, indent + 1));
         }
 
+        // Repository field stubs — JPA interfaces return null by default; pre-stub common operations
+        sb.append(buildRepositoryStubs(m, indent + 1));
+
         if (!usesMockBeans && m.hasSuperClass()) {
             sb.append(buildSuperClassStubs(m, indent + 1));
         }
@@ -451,6 +454,38 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         }
 
         sb.append(i(indent)).append("}\n\n");
+        return sb.toString();
+    }
+
+    // ── Repository field stubs ──────────────────────────────────────────────
+
+    /**
+     * For every injected field whose simple type ends with "Repository",
+     * emits commented-out stubs for the common JPA operations so developers
+     * know exactly what to configure rather than getting silent null returns.
+     */
+    protected String buildRepositoryStubs(ClassMetadata m, int indent) {
+        List<FieldMetadata> repos = m.mockCandidates().stream()
+                .filter(f -> f.simpleType().endsWith("Repository"))
+                .toList();
+        if (repos.isEmpty()) return "";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(i(indent)).append("// Repository stubs — JPA mocks return null by default; configure as needed\n");
+        for (FieldMetadata f : repos) {
+            String mock = f.name();
+            String entity = f.simpleType().replace("Repository", "");
+            sb.append(i(indent))
+              .append("// when(").append(mock).append(".findById(any())).thenReturn(Optional.of(")
+              .append(entity).append("TestData.buildValid").append(entity).append("()));\n");
+            sb.append(i(indent))
+              .append("// when(").append(mock).append(".findAll()).thenReturn(")
+              .append(entity).append("TestData.build").append(entity).append("List());\n");
+            sb.append(i(indent))
+              .append("// when(").append(mock).append(".save(any())).thenAnswer(inv -> inv.getArgument(0));\n");
+            sb.append(i(indent))
+              .append("// doNothing().when(").append(mock).append(").deleteById(any());\n");
+        }
         return sb.toString();
     }
 
@@ -542,12 +577,20 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         String call = "subject." + mm.name() + "(" + buildDefaultParamArgs(mm) + ")";
         switch (ann) {
             case "Transactional" -> {
+                // Surface @Transactional attribute values from the annotation if available
+                String txAttrs = mm.annotations().stream()
+                        .filter(a -> a.startsWith("Transactional"))
+                        .findFirst()
+                        .filter(a -> a.contains("("))
+                        .map(a -> " " + a.substring(a.indexOf('(')))
+                        .orElse("");
+                sb.append(i(indent)).append("// @Transactional").append(txAttrs).append("\n");
                 sb.append(i(indent)).append("// Verify transaction commits on success\n");
                 sb.append(i(indent)).append(call).append(";\n");
-                sb.append(i(indent)).append("// TODO: assert expected state after commit\n\n");
+                sb.append(i(indent)).append("// TODO: assert expected DB state after commit\n\n");
                 sb.append(i(indent)).append("// Verify transaction rolls back on exception\n");
                 sb.append(i(indent))
-                  .append("// TODO: configure mock to throw RuntimeException, then assertThrows\n");
+                  .append("// TODO: configure mock to throw RuntimeException → assertThrows, then verify rollback\n");
             }
             case "Async" -> {
                 sb.append(i(indent)).append("// Async method — returns immediately; use CompletableFuture or CountDownLatch\n");
@@ -728,21 +771,34 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     // ── Exception / throws helpers ──────────────────────────────────────────
 
     /**
-     * Returns " throws ExType1, ExType2" if the method declares any thrown exceptions,
-     * otherwise empty string.  Applied to success and parameterized test signatures so
-     * checked exceptions don't cause compile errors in the generated test.
+     * Returns " throws ExType1, ExType2" if the method declares any thrown exceptions.
+     * If the root Exception (or Throwable) is already in the list it covers everything —
+     * simplify to just " throws Exception" to avoid redundant declarations.
      */
     private String checkedThrowsClause(MethodMetadata mm) {
         if (!mm.throwsExceptions()) return "";
-        return " throws " + String.join(", ", mm.thrownExceptions());
+        List<String> exceptions = mm.thrownExceptions();
+        // If broad Exception / Throwable is declared, no need to list narrower types
+        if (exceptions.contains("Exception") || exceptions.contains("Throwable")) {
+            return " throws Exception";
+        }
+        return " throws " + String.join(", ", exceptions);
     }
 
     // ── Private helpers ─────────────────────────────────────────────────────
 
     private void buildParamSetup(MethodMetadata mm, StringBuilder sb, int indent) {
         for (MethodMetadata.ParameterMetadata p : mm.parameters()) {
-            sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
-              .append(" = ").append(defaultValue(p.type())).append(";\n");
+            String rawType   = p.type().replaceAll("<.*>", "").trim();
+            String value     = defaultValue(p.type());
+            boolean isDomain = value.startsWith("null"); // non-primitive, non-standard type
+            sb.append(i(indent)).append(p.type()).append(" ").append(p.name()).append(" = ");
+            if (isDomain) {
+                // Reference the companion TestData builder so tests have a real object, not null
+                sb.append(rawType).append("TestData.buildValid").append(rawType).append("();\n");
+            } else {
+                sb.append(value).append(";\n");
+            }
         }
     }
 
