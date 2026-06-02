@@ -262,6 +262,10 @@ public class JavaClassParser {
         // Pattern H: try/catch blocks
         boolean hasTryCatch = !method.findAll(TryStmt.class).isEmpty();
 
+        // Condition scenario extraction — analyze conditions for coverage-focused test data
+        List<ConditionScenario> conditionScenarios =
+                extractConditionScenarios(method, params);
+
         return new MethodMetadata(
                 method.getNameAsString(),
                 method.getTypeAsString(),
@@ -271,8 +275,200 @@ public class JavaClassParser {
                 annotations.contains("Override"),
                 false,
                 superCalls, staticCallClasses, helperCalls,
-                hasConditionals, hasNumericComparisons, hasTryCatch
+                hasConditionals, hasNumericComparisons, hasTryCatch,
+                conditionScenarios
         );
+    }
+
+    // ── Condition scenario extraction ────────────────────────────────────────
+
+    /**
+     * Analyses a method's IfStmt nodes and extracts condition scenarios.
+     * Each scenario describes:
+     *  - which parameter is involved (name + type)
+     *  - which field (getter → fieldName)
+     *  - what value makes the condition TRUE vs FALSE
+     *
+     * Supports:
+     *  - NULL_CHECK:    param.getField() == null  /  param.getField() != null
+     *  - BOOLEAN_CHECK: param.isField()
+     *  - EQUALS_CHECK:  param.getField().equals("value")
+     *  - NUMERIC_CHECK: param.getField() > 0 / < value / etc.
+     */
+    private List<ConditionScenario> extractConditionScenarios(
+            MethodDeclaration method,
+            List<MethodMetadata.ParameterMetadata> params) {
+
+        if (params.isEmpty()) return List.of();
+
+        // Build param name → simple type map for lookup
+        Map<String, String> paramTypeMap = params.stream()
+                .collect(Collectors.toMap(
+                        MethodMetadata.ParameterMetadata::name,
+                        p -> p.type().replaceAll("<.*>", "").trim()));
+
+        List<ConditionScenario> scenarios = new ArrayList<>();
+        Set<String> seen = new HashSet<>(); // dedup: paramName + fieldName
+
+        for (IfStmt ifStmt : method.findAll(IfStmt.class)) {
+            analyseCondition(ifStmt.getCondition(), method.getNameAsString(),
+                    paramTypeMap, scenarios, seen);
+        }
+        return scenarios;
+    }
+
+    private void analyseCondition(Expression condition, String methodName,
+                                   Map<String, String> paramTypeMap,
+                                   List<ConditionScenario> scenarios,
+                                   Set<String> seen) {
+        // ── NULL_CHECK: param.getXxx() == null OR param.getXxx() != null ──
+        if (condition instanceof BinaryExpr binary) {
+            BinaryExpr.Operator op = binary.getOperator();
+            boolean isNullOp = op == BinaryExpr.Operator.EQUALS
+                    || op == BinaryExpr.Operator.NOT_EQUALS;
+
+            if (isNullOp && binary.getRight() instanceof NullLiteralExpr
+                    && binary.getLeft() instanceof MethodCallExpr getter
+                    && getter.getScope().filter(s -> s instanceof NameExpr).isPresent()) {
+
+                String paramName = ((NameExpr) getter.getScope().get()).getNameAsString();
+                String paramType = paramTypeMap.get(paramName);
+                if (paramType != null && isPotentialDomainType(paramType)) {
+                    String fieldName  = getterToField(getter.getNameAsString());
+                    String setterName = fieldToSetter(fieldName);
+                    String key = paramName + "." + fieldName;
+                    if (seen.add(key)) {
+                        boolean equalsNull = op == BinaryExpr.Operator.EQUALS;
+                        scenarios.add(new ConditionScenario(
+                                methodName, paramName, paramType,
+                                fieldName, setterName,
+                                ConditionScenario.ConditionType.NULL_CHECK,
+                                equalsNull ? paramName + cap(fieldName) + "Null"
+                                           : paramName + cap(fieldName) + "Present",
+                                equalsNull ? paramName + cap(fieldName) + "Present"
+                                           : paramName + cap(fieldName) + "Null",
+                                equalsNull ? "null" : "/* non-null value */",
+                                equalsNull ? "/* non-null value */" : "null"
+                        ));
+                    }
+                }
+            }
+
+            // ── NUMERIC_CHECK: param.getXxx() > 0 / < value / etc. ──────
+            boolean isNumericOp = op == BinaryExpr.Operator.GREATER
+                    || op == BinaryExpr.Operator.LESS
+                    || op == BinaryExpr.Operator.GREATER_EQUALS
+                    || op == BinaryExpr.Operator.LESS_EQUALS;
+
+            if (isNumericOp
+                    && binary.getLeft() instanceof MethodCallExpr getter
+                    && getter.getScope().filter(s -> s instanceof NameExpr).isPresent()) {
+
+                String paramName = ((NameExpr) getter.getScope().get()).getNameAsString();
+                String paramType = paramTypeMap.get(paramName);
+                String rhsText   = binary.getRight().toString();
+                if (paramType != null && isPotentialDomainType(paramType)) {
+                    String fieldName  = getterToField(getter.getNameAsString());
+                    String setterName = fieldToSetter(fieldName);
+                    String key = paramName + "." + fieldName + ".numeric";
+                    if (seen.add(key)) {
+                        scenarios.add(new ConditionScenario(
+                                methodName, paramName, paramType,
+                                fieldName, setterName,
+                                ConditionScenario.ConditionType.NUMERIC_CHECK,
+                                paramName + cap(fieldName) + "AboveThreshold",
+                                paramName + cap(fieldName) + "BelowThreshold",
+                                rhsText + " + 1",   // above threshold
+                                rhsText + " - 1"    // below threshold
+                        ));
+                    }
+                }
+            }
+        }
+
+        // ── BOOLEAN_CHECK: param.isField() ────────────────────────────────
+        if (condition instanceof MethodCallExpr boolCall
+                && boolCall.getNameAsString().startsWith("is")
+                && boolCall.getScope().filter(s -> s instanceof NameExpr).isPresent()) {
+
+            String paramName = ((NameExpr) boolCall.getScope().get()).getNameAsString();
+            String paramType = paramTypeMap.get(paramName);
+            if (paramType != null && isPotentialDomainType(paramType)) {
+                String getterName = boolCall.getNameAsString();
+                String fieldName  = Character.toLowerCase(getterName.charAt(2))
+                        + getterName.substring(3);
+                String setterName = "set" + getterName.substring(2);
+                String key = paramName + "." + fieldName + ".bool";
+                if (seen.add(key)) {
+                    scenarios.add(new ConditionScenario(
+                            methodName, paramName, paramType,
+                            fieldName, setterName,
+                            ConditionScenario.ConditionType.BOOLEAN_CHECK,
+                            paramName + cap(fieldName) + "True",
+                            paramName + cap(fieldName) + "False",
+                            "true", "false"
+                    ));
+                }
+            }
+        }
+
+        // ── EQUALS_CHECK: param.getField().equals("value") ────────────────
+        if (condition instanceof MethodCallExpr equalsCall
+                && equalsCall.getNameAsString().equals("equals")
+                && equalsCall.getScope().filter(s -> s instanceof MethodCallExpr).isPresent()
+                && !equalsCall.getArguments().isEmpty()) {
+
+            MethodCallExpr getter = (MethodCallExpr) equalsCall.getScope().get();
+            if (getter.getScope().filter(s -> s instanceof NameExpr).isPresent()) {
+                String paramName = ((NameExpr) getter.getScope().get()).getNameAsString();
+                String paramType = paramTypeMap.get(paramName);
+                String compareVal = equalsCall.getArgument(0).toString();
+                if (paramType != null && isPotentialDomainType(paramType)) {
+                    String fieldName  = getterToField(getter.getNameAsString());
+                    String setterName = fieldToSetter(fieldName);
+                    String key = paramName + "." + fieldName + ".eq";
+                    if (seen.add(key)) {
+                        scenarios.add(new ConditionScenario(
+                                methodName, paramName, paramType,
+                                fieldName, setterName,
+                                ConditionScenario.ConditionType.EQUALS_CHECK,
+                                paramName + cap(fieldName) + "Matches",
+                                paramName + cap(fieldName) + "NoMatch",
+                                compareVal,           // "CONFIRMED" — true
+                                "\"OTHER\""           // false
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    /** Returns true for types that are likely domain objects (not primitives or standard types). */
+    private boolean isPotentialDomainType(String type) {
+        return !Set.of("String", "int", "Integer", "long", "Long", "double", "Double",
+                "float", "Float", "boolean", "Boolean", "byte", "Byte", "short", "Short",
+                "char", "Character", "Object", "void").contains(type);
+    }
+
+    /** Converts getter name to field name: getAmount → amount, isActive → active */
+    private String getterToField(String getter) {
+        if (getter.startsWith("get") && getter.length() > 3) {
+            return Character.toLowerCase(getter.charAt(3)) + getter.substring(4);
+        }
+        if (getter.startsWith("is") && getter.length() > 2) {
+            return Character.toLowerCase(getter.charAt(2)) + getter.substring(3);
+        }
+        return getter;
+    }
+
+    /** Converts field name to setter: amount → setAmount */
+    private String fieldToSetter(String field) {
+        return "set" + Character.toUpperCase(field.charAt(0)) + field.substring(1);
+    }
+
+    private String cap(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
     private List<String> extractAnnotationNames(NodeWithAnnotations<?> node) {

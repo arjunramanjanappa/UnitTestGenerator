@@ -691,26 +691,62 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         StringBuilder sb = new StringBuilder();
         String throwsDecl = checkedThrowsClause(mm);
 
-        // TRUE branch
+        // If condition scenarios were detected, generate targeted tests using named TestData
+        if (mm.hasConditionScenarios()) {
+            for (com.testgen.parser.ConditionScenario sc : mm.conditionScenarios()) {
+                String ownerTestData = m.className() + "TestData";
+
+                // TRUE branch — uses named scenario method from ClassATestData
+                String trueName = convention.unitTestMethod(mm.name(),
+                        "when_" + sc.trueLabel(), buildParamSuffix(mm));
+                sb.append(i(indent)).append("@Test\n");
+                sb.append(i(indent)).append("void ").append(trueName).append("()").append(throwsDecl).append(" {\n");
+                sb.append(i(indent + 1)).append("// Scenario: ").append(sc.paramName()).append(".")
+                  .append(sc.fieldName()).append(" = ").append(sc.trueSetExpr())
+                  .append(" → condition TRUE → ").append(sc.trueLabel()).append("\n");
+                // Use named scenario from ClassATestData
+                sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
+                  .append(" = ").append(ownerTestData).append(".").append(sc.trueMethodName()).append("();\n");
+                if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
+                sb.append(i(indent + 1)).append("// TODO: assert TRUE-branch outcome\n");
+                sb.append(i(indent)).append("}\n\n");
+
+                // FALSE branch
+                String falseName = convention.unitTestMethod(mm.name(),
+                        "when_" + sc.falseLabel(), buildParamSuffix(mm));
+                sb.append(i(indent)).append("@Test\n");
+                sb.append(i(indent)).append("void ").append(falseName).append("()").append(throwsDecl).append(" {\n");
+                sb.append(i(indent + 1)).append("// Scenario: ").append(sc.paramName()).append(".")
+                  .append(sc.fieldName()).append(" = ").append(sc.falseSetExpr())
+                  .append(" → condition FALSE → ").append(sc.falseLabel()).append("\n");
+                sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
+                  .append(" = ").append(ownerTestData).append(".").append(sc.falseMethodName()).append("();\n");
+                if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
+                sb.append(i(indent + 1)).append("// TODO: assert FALSE-branch outcome\n");
+                sb.append(i(indent)).append("}\n\n");
+            }
+            return sb.toString();
+        }
+
+        // Generic fallback when no specific conditions were detected
         String trueName = convention.unitTestMethod(mm.name(), "when_condition_isTrue",
                 buildParamSuffix(mm));
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ").append(trueName).append("()").append(throwsDecl).append(" {\n");
         sb.append(i(indent + 1)).append("// Pattern C — TRUE branch: configure subject/mocks for the positive condition\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
-        sb.append(i(indent + 1)).append("// TODO: doReturn(true).when(subject).isConditionFlag();  OR set field via ReflectionTestUtils\n");
+        sb.append(i(indent + 1)).append("// TODO: set field / doReturn to trigger TRUE branch\n");
         if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
         sb.append(i(indent + 1)).append("// TODO: assert true-branch outcome\n");
         sb.append(i(indent)).append("}\n\n");
 
-        // FALSE branch
         String falseName = convention.unitTestMethod(mm.name(), "when_condition_isFalse",
                 buildParamSuffix(mm));
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ").append(falseName).append("()").append(throwsDecl).append(" {\n");
-        sb.append(i(indent + 1)).append("// Pattern C — FALSE branch: configure subject/mocks for the negative condition\n");
+        sb.append(i(indent + 1)).append("// Pattern C — FALSE branch\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
-        sb.append(i(indent + 1)).append("// TODO: doReturn(false).when(subject).isConditionFlag();  OR set field via ReflectionTestUtils\n");
+        sb.append(i(indent + 1)).append("// TODO: set field / doReturn to trigger FALSE branch\n");
         if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
         sb.append(i(indent + 1)).append("// TODO: assert false-branch outcome\n");
         sb.append(i(indent)).append("}\n\n");

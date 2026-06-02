@@ -2,7 +2,9 @@ package com.testgen.generator.builder;
 
 import com.testgen.generator.GeneratedTest;
 import com.testgen.parser.ClassMetadata;
+import com.testgen.parser.ConditionScenario;
 import com.testgen.parser.FieldMetadata;
+import com.testgen.parser.MethodMetadata;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -59,6 +61,7 @@ public class DataBuilderGenerator {
         sb.append(buildInvalidFactory(m));
         sb.append(buildBoundaryFactory(m));
         sb.append(buildListFactory(m));
+        sb.append(buildConditionScenarioFactories(m));
         sb.append(buildDependencyFactories(m));
 
         sb.append("}\n");
@@ -158,6 +161,103 @@ public class DataBuilderGenerator {
         return I1 + "public static List<" + m.className() + "> build" + m.className() + "List() {\n"
              + I2 + "return List.of(buildValid" + m.className() + "());\n"
              + I1 + "}\n\n";
+    }
+
+    // ── Coverage-driven scenario factories ──────────────────────────────────
+
+    /**
+     * Generates named scenario factory methods derived from condition analysis of
+     * the class's own methods. Each detected condition (null check, boolean, equals,
+     * numeric) produces TWO factory methods:
+     *  - One that makes the condition TRUE  (e.g. amount=null  → triggers exception)
+     *  - One that makes the condition FALSE (e.g. amount=1L    → normal execution)
+     *
+     * These are generated in the CLASS UNDER TEST's TestData so tests can reference:
+     *   ClassATestData.build_validate_voAmountNull()       ← triggers exception branch
+     *   ClassATestData.build_validate_voAmountPresent()    ← normal execution branch
+     */
+    private String buildConditionScenarioFactories(ClassMetadata m) {
+        List<ConditionScenario> allScenarios = m.methods().stream()
+                .filter(MethodMetadata::isTestable)
+                .filter(MethodMetadata::hasConditionScenarios)
+                .flatMap(mm -> mm.conditionScenarios().stream())
+                .toList();
+
+        if (allScenarios.isEmpty()) return "";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(I1).append("// ===== Coverage scenarios from condition analysis =====\n\n");
+
+        Set<String> generated = new HashSet<>();
+
+        for (ConditionScenario sc : allScenarios) {
+            // TRUE scenario
+            String trueName = sc.trueMethodName();
+            if (generated.add(trueName)) {
+                sb.append(buildScenarioMethod(m, sc, trueName, sc.trueSetExpr(), sc.trueLabel()));
+            }
+            // FALSE scenario
+            String falseName = sc.falseMethodName();
+            if (generated.add(falseName)) {
+                sb.append(buildScenarioMethod(m, sc, falseName, sc.falseSetExpr(), sc.falseLabel()));
+            }
+        }
+        return sb.toString();
+    }
+
+    private String buildScenarioMethod(ClassMetadata m, ConditionScenario sc,
+                                        String methodName, String setExpr, String label) {
+        String paramType    = sc.paramType();
+        String baseMethod   = "buildValid" + paramType + "()";
+        boolean hasTestData = m.concreteClassNames() != null
+                && m.concreteClassNames().contains(paramType);
+
+        // For NULL_CHECK: FALSE scenario means "field is NON-null" → base TestData already has it set
+        // Just return the base TestData without overriding the field
+        boolean isNoOverride = setExpr == null || setExpr.isEmpty()
+                || setExpr.startsWith("/*"); // comment placeholder = no meaningful override
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(I1).append("/**\n");
+        sb.append(I1).append(" * Scenario: ").append(sc.methodName()).append("()")
+          .append(" — condition '").append(sc.paramName()).append(".get")
+          .append(cap(sc.fieldName())).append("() ")
+          .append(conditionDescription(sc.type())).append("' → ").append(label).append("\n");
+        if (isNoOverride) {
+            sb.append(I1).append(" * Field '").append(sc.fieldName())
+              .append("' is already set in buildValid").append(paramType).append("()\n");
+        }
+        sb.append(I1).append(" */\n");
+        sb.append(I1).append("public static ").append(paramType).append(" ").append(methodName).append("() {\n");
+
+        if (isNoOverride && hasTestData) {
+            // Field already non-null in base TestData — no override needed
+            sb.append(I2).append("return ").append(paramType).append("TestData.").append(baseMethod).append(";\n");
+        } else if (hasTestData) {
+            sb.append(I2).append(paramType).append(" obj = ").append(paramType).append("TestData.")
+              .append(baseMethod).append(";\n");
+            sb.append(I2).append("obj.").append(sc.setterName()).append("(").append(setExpr).append(");\n");
+            sb.append(I2).append("return obj;\n");
+        } else {
+            // No TestData — instantiate directly
+            sb.append(I2).append(paramType).append(" obj = new ").append(paramType).append("();\n");
+            if (!isNoOverride) {
+                sb.append(I2).append("obj.").append(sc.setterName()).append("(").append(setExpr).append(");\n");
+            }
+            sb.append(I2).append("// TODO: set other required fields on ").append(paramType).append("\n");
+            sb.append(I2).append("return obj;\n");
+        }
+        sb.append(I1).append("}\n\n");
+        return sb.toString();
+    }
+
+    private String conditionDescription(ConditionScenario.ConditionType type) {
+        return switch (type) {
+            case NULL_CHECK     -> "== null";
+            case BOOLEAN_CHECK  -> "== true";
+            case EQUALS_CHECK   -> ".equals(value)";
+            case NUMERIC_CHECK  -> "comparison";
+        };
     }
 
     // ── Dependency factories ─────────────────────────────────────────────────

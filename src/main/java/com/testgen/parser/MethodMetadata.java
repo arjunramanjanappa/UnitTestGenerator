@@ -15,12 +15,13 @@ public record MethodMetadata(
         boolean isFinal,
         boolean isOverride,
         boolean isConstructor,
-        List<String> superMethodCalls,   // super.xxx() calls in body
-        List<String> staticCallClasses,  // Uppercase-scoped method calls → likely static
-        List<String> helperMethodCalls,  // populate*/build*/create*/map*/assemble* internal calls
-        boolean hasConditionals,         // if/else/switch/ternary
-        boolean hasNumericComparisons,   // >, <, >=, <=, compareTo
-        boolean hasTryCatch             // try/catch blocks
+        List<String> superMethodCalls,          // super.xxx() calls in body
+        List<String> staticCallClasses,         // Uppercase-scoped method calls → likely static
+        List<String> helperMethodCalls,         // internal method calls (structural)
+        boolean hasConditionals,                // if/else/switch/ternary
+        boolean hasNumericComparisons,          // >, <, >=, <=, compareTo
+        boolean hasTryCatch,                    // try/catch blocks
+        List<ConditionScenario> conditionScenarios  // detected branch conditions with scenarios
 ) {
     public boolean hasReturnValue() {
         return !"void".equals(returnType);
@@ -44,6 +45,10 @@ public record MethodMetadata(
 
     public boolean hasHelperCalls() {
         return helperMethodCalls != null && !helperMethodCalls.isEmpty();
+    }
+
+    public boolean hasConditionScenarios() {
+        return conditionScenarios != null && !conditionScenarios.isEmpty();
     }
 
     public record ParameterMetadata(String type, String name) {}

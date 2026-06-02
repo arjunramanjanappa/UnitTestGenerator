@@ -337,7 +337,7 @@ public class TestOrchestrator {
                     Modifier.isPublic(mod), Modifier.isProtected(mod),
                     false, Modifier.isAbstract(mod), Modifier.isFinal(mod),
                     false, false,
-                    List.of(), List.of(), List.of(), false, false, false
+                    List.of(), List.of(), List.of(), false, false, false, List.of()
             ));
         }
 
