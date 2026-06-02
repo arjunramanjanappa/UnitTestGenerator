@@ -128,7 +128,13 @@ public class TestOrchestrator {
 
                 TestStrategy strategy = pickStrategy(meta, xmlRoutes);
                 List<GeneratedTest> tests = new ArrayList<>(strategy.generate(meta, convention));
+
+                // Generate TestData for the class under test
                 tests.add(dataBuilderGenerator.generate(meta));
+
+                // Also generate TestData for every domain type referenced in method params / return types
+                // so the generated tests compile without missing XxxTestData references
+                generateDependentTestData(meta, tests, javaFiles);
 
                 for (GeneratedTest test : tests) {
                     if (dryRun) {
@@ -359,6 +365,59 @@ public class TestOrchestrator {
                 .filter(ifaceIndex::containsKey)
                 .flatMap(iface -> classParser.parseInterfaceDefaultMethods(ifaceIndex.get(iface)).stream())
                 .collect(Collectors.toList());
+    }
+
+    // ── Dependent TestData generation ──────────────────────────────────────
+
+    /**
+     * For every domain type in the class's paramTypeRegistry that originated from
+     * a project source file (not a reflection-resolved framework class), generates
+     * a companion TestData file so the generated test compiles without missing
+     * XxxTestData references.
+     *
+     * Skips:
+     *  - Types from the classpath/reflection (sourceFilePath starts with "[classpath:")
+     *  - Types already being processed in the main scan loop (avoids duplicates)
+     *  - Types whose TestData file was already added in a previous dep expansion
+     */
+    private void generateDependentTestData(ClassMetadata meta,
+                                            List<GeneratedTest> tests,
+                                            List<Path> alreadyScanned) {
+        if (meta.paramTypeRegistry() == null || meta.paramTypeRegistry().isEmpty()) return;
+
+        // Build a set of class names already covered by the main scan
+        Set<String> alreadyScannedNames = alreadyScanned.stream()
+                .map(p -> p.getFileName().toString().replace(".java", ""))
+                .collect(Collectors.toSet());
+
+        // Track TestData file names already added to this batch (within same class's deps)
+        Set<String> addedTestDataFiles = tests.stream()
+                .map(GeneratedTest::fileName)
+                .collect(Collectors.toSet());
+
+        for (Map.Entry<String, com.testgen.parser.ClassMetadata> entry
+                : meta.paramTypeRegistry().entrySet()) {
+
+            com.testgen.parser.ClassMetadata depMeta = entry.getValue();
+
+            // Skip reflection-resolved framework/library types
+            if (depMeta.sourceFilePath().startsWith("[classpath:")) continue;
+
+            // Skip if this type will be (or was) processed in the main scan loop
+            if (alreadyScannedNames.contains(depMeta.className())) continue;
+
+            // Skip if TestData was already added (e.g. from a previous dep in same class)
+            String testDataFileName = depMeta.className() + "TestData.java";
+            if (addedTestDataFiles.contains(testDataFileName)) continue;
+
+            // Enrich the dep metadata with the same concrete class names for typed values
+            com.testgen.parser.ClassMetadata enriched =
+                    depMeta.withConcreteClassNames(meta.concreteClassNames());
+
+            tests.add(dataBuilderGenerator.generate(enriched));
+            addedTestDataFiles.add(testDataFileName);
+            log.info("Generated companion TestData for dependency: {}", depMeta.className());
+        }
     }
 
     // ── Param type registry (typed inline init for non-TestData types) ──────
