@@ -45,11 +45,18 @@
     <!-- ── Left Sidebar: Config ── -->
     <div class="sidebar" style="width: 300px; min-width: 280px;">
 
-        <div class="section-label">Source</div>
+        <div class="section-label">Source
+            <span class="text-muted fw-normal" style="font-size:10px;text-transform:none">
+                — folder <em>or</em> single .java file
+            </span>
+        </div>
         <div class="input-group input-group-sm mb-2">
             <input id="sourcePath" type="text" class="form-control"
-                   placeholder="C:\project\src\main\java"
-                   oninput="autoFillTarget()"/>
+                   placeholder="C:\project\src\main\java  OR  C:\...\ClassA.java"
+                   oninput="autoFillTarget(); detectSingleFile();"/>
+        </div>
+        <div id="singleFileHint" class="text-info" style="font-size:11px;display:none;margin-bottom:6px;">
+            &#9432; Single file mode — include filter will be set automatically.
         </div>
 
         <div class="section-label">Target</div>
@@ -179,9 +186,33 @@
     function autoFillTarget() {
         const src = document.getElementById('sourcePath').value;
         const tgt = document.getElementById('targetPath');
-        if (src.includes('src/main/java') || src.includes('src\\main\\java')) {
-            tgt.value = src.replace('src/main/java', 'src/test/java')
-                           .replace('src\\main\\java', 'src\\test\\java');
+        // For single .java file: derive target from the folder containing src/main/java
+        const effective = isSingleFile(src)
+            ? src.replace(/[\/\\][^\/\\]+\.java$/, '')   // strip filename → directory
+            : src;
+        if (effective.includes('src/main/java') || effective.includes('src\\main\\java')) {
+            tgt.value = effective.replace('src/main/java', 'src/test/java')
+                                  .replace('src\\main\\java', 'src\\test\\java');
+        }
+    }
+
+    function isSingleFile(path) {
+        return path && (path.endsWith('.java') || path.endsWith('.JAVA'));
+    }
+
+    function detectSingleFile() {
+        const src  = document.getElementById('sourcePath').value;
+        const hint = document.getElementById('singleFileHint');
+        if (isSingleFile(src)) {
+            hint.style.display = 'block';
+            // Auto-extract class name and pre-populate include filter
+            const match = src.match(/[\/\\]([^\/\\]+)\.java$/i);
+            if (match) {
+                const inc = document.getElementById('includePatterns');
+                if (!inc.value.trim()) inc.value = match[1];
+            }
+        } else {
+            hint.style.display = 'none';
         }
     }
 
