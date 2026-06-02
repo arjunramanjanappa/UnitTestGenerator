@@ -21,6 +21,7 @@ public class ComponentTestStrategy extends AbstractTestStrategy {
         StringBuilder sb = new StringBuilder();
         sb.append("package ").append(m.packageName()).append(";\n\n");
         sb.append(commonImports(m.springBootVersion()));
+        sb.append(buildDependencyImports(m));
         sb.append("\n");
         sb.append("class ").append(cls).append("Test {\n\n");
         sb.append(buildUnitNested(m));

@@ -83,6 +83,7 @@ public class CamelRouteTestStrategy extends AbstractTestStrategy {
         StringBuilder sb = new StringBuilder();
         sb.append("package ").append(m.packageName()).append(";\n\n");
         sb.append(commonImports(m.springBootVersion()));
+        sb.append(buildDependencyImports(m));
         sb.append("import org.apache.camel.CamelContext;\n");
         sb.append("import org.apache.camel.ProducerTemplate;\n");
         sb.append("import org.apache.camel.builder.AdviceWith;\n");

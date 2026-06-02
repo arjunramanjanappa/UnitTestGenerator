@@ -5,6 +5,8 @@ import com.testgen.parser.*;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 
 /**
  * Shared code-generation utilities for all strategies.
@@ -108,6 +110,74 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             case "Optional"      -> "Optional.empty()";
             default              -> "null /* TODO: provide " + rawType + " */";
         };
+    }
+
+    // ── Dependency import resolution ────────────────────────────────────────
+
+    /**
+     * Collects all simple type names referenced in the generated test
+     * (mocked fields, parent chain, method params, return types, thrown exceptions,
+     * interface default method params/returns) and matches them against the
+     * source class's own import list to emit fully-qualified import statements.
+     *
+     * This ensures generated tests compile without manual import editing.
+     */
+    protected String buildDependencyImports(ClassMetadata m) {
+        // Collect every simple type name the test file will reference
+        Set<String> usedSimpleNames = new LinkedHashSet<>();
+
+        // Injected / mock fields
+        for (FieldMetadata f : m.mockCandidates()) {
+            usedSimpleNames.add(f.simpleType());
+        }
+
+        // Parent chain classes (for @Spy declarations)
+        if (m.hasParentChain()) {
+            m.parentChain().forEach(p -> usedSimpleNames.add(p.className()));
+        } else if (m.hasSuperClass()) {
+            usedSimpleNames.add(m.superClassName());
+        }
+
+        // Own methods: params, return types, thrown exceptions
+        collectMethodTypes(m.methods(), usedSimpleNames);
+
+        // Interface default methods: params, return types
+        if (m.hasInterfaceDefaultMethods()) {
+            collectMethodTypes(m.interfaceDefaultMethods(), usedSimpleNames);
+        }
+
+        // Build FQN → simple-name map from the source file's imports
+        Map<String, String> simpleToFqn = new LinkedHashMap<>();
+        for (String fqn : m.imports()) {
+            String simpleName = fqn.contains(".")
+                    ? fqn.substring(fqn.lastIndexOf('.') + 1)
+                    : fqn;
+            simpleToFqn.put(simpleName, fqn);
+        }
+
+        // Emit an import for each used type that appears in the source imports
+        StringBuilder sb = new StringBuilder();
+        for (String simple : usedSimpleNames) {
+            // Strip generic part if present (e.g. "List<Order>" → "Order")
+            String[] parts = simple.replaceAll(".*<|>.*", "").split("[,\\s]+");
+            for (String part : parts) {
+                String stripped = part.trim().replaceAll("[\\[\\]]", "");
+                if (stripped.isEmpty()) continue;
+                String fqn = simpleToFqn.get(stripped);
+                if (fqn != null && !fqn.startsWith("java.lang")) {
+                    sb.append("import ").append(fqn).append(";\n");
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private void collectMethodTypes(List<MethodMetadata> methods, Set<String> target) {
+        for (MethodMetadata mm : methods) {
+            if (!"void".equals(mm.returnType())) target.add(mm.returnType());
+            mm.parameters().forEach(p -> target.add(p.type()));
+            target.addAll(mm.thrownExceptions());
+        }
     }
 
     // ── Common import blocks ────────────────────────────────────────────────

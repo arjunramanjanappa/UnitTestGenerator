@@ -22,6 +22,7 @@ public class ControllerTestStrategy extends AbstractTestStrategy {
         StringBuilder sb = new StringBuilder();
         sb.append("package ").append(m.packageName()).append(";\n\n");
         sb.append(commonImports(m.springBootVersion()));
+        sb.append(buildDependencyImports(m));
         sb.append("import org.springframework.test.web.servlet.MockMvc;\n");
         sb.append("import org.springframework.test.web.servlet.setup.MockMvcBuilders;\n");
         sb.append("import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;\n");
