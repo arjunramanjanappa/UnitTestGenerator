@@ -635,10 +635,12 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         // AOP warning — emitted before the @Test so the reader sees it immediately
         sb.append(buildAopWarningComment(mm, indent));
 
-        // Success test
+        // Success test — declare throws so checked exceptions don't cause compile errors
+        String throwsClause = checkedThrowsClause(mm);
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ")
-          .append(convention.unitTestMethod(mm.name(), "success")).append("() {\n");
+          .append(convention.unitTestMethod(mm.name(), "success"))
+          .append("()").append(throwsClause).append(" {\n");
         sb.append(i(indent + 1)).append("// given\n");
         buildParamSetup(mm, sb, indent + 1);
 
@@ -678,38 +680,61 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                                               String exType, int indent) {
         StringBuilder sb = new StringBuilder();
         sb.append(i(indent)).append("@Test\n");
+        // Exception test: assertThrows wraps the call in a lambda — no throws clause needed
         sb.append(i(indent)).append("void ")
           .append(convention.exceptionTestMethod(mm.name(), exType)).append("() {\n");
         sb.append(i(indent + 1)).append("// given\n");
         buildParamSetup(mm, sb, indent + 1);
-        sb.append(i(indent + 1))
-          .append("// TODO: configure mock to throw → doThrow(").append(exType)
-          .append(".class).when(mockDep).someMethod(any());\n");
-        sb.append(i(indent + 1)).append("// when / then\n");
 
+        // Specific doThrow stub wired to the exact exception type
+        sb.append(i(indent + 1))
+          .append("// Arrange: configure a mock dependency to throw ").append(exType).append("\n");
+        sb.append(i(indent + 1))
+          .append("// doThrow(new ").append(exType).append("(\"test\"))")
+          .append(".when(<mockDep>).<methodThatTriggers>(any()); // TODO: identify the triggering mock call\n");
+
+        sb.append(i(indent + 1)).append("// when / then\n");
         String params = paramNames(mm);
         if (mm.isProtected()) {
             String sep = params.isEmpty() ? "" : ", ";
-            sb.append(i(indent + 1)).append("assertThrows(").append(exType).append(".class, () ->\n");
+            sb.append(i(indent + 1))
+              .append(exType).append(" thrown = assertThrows(").append(exType).append(".class, () ->\n");
             sb.append(i(indent + 2)).append("ReflectionTestUtils.invokeMethod(")
               .append(subject).append(", \"").append(mm.name()).append("\"")
               .append(sep).append(params).append("));\n");
         } else {
-            sb.append(i(indent + 1)).append("assertThrows(").append(exType).append(".class, () ->\n");
+            sb.append(i(indent + 1))
+              .append(exType).append(" thrown = assertThrows(").append(exType).append(".class, () ->\n");
             sb.append(i(indent + 2)).append(subject).append(".")
               .append(mm.name()).append("(").append(params).append("));\n");
         }
+        sb.append(i(indent + 1)).append("assertNotNull(thrown);\n");
+        sb.append(i(indent + 1))
+          .append("// TODO: assertEquals(\"expected message\", thrown.getMessage());\n");
         sb.append(i(indent)).append("}\n\n");
         return sb.toString();
     }
 
     protected String buildParameterizedTestMethod(MethodMetadata mm, String subject, int indent) {
-        String testName = convention.unitTestMethod(mm.name(), "parameterized");
+        String testName   = convention.unitTestMethod(mm.name(), "parameterized");
+        String throwsDecl = checkedThrowsClause(mm);
         return i(indent) + "@ParameterizedTest\n"
              + i(indent) + "@CsvSource({\"value1\", \"value2\"}) // TODO: provide representative values\n"
-             + i(indent) + "void " + testName + "(String param) {\n"
+             + i(indent) + "void " + testName + "(String param)" + throwsDecl + " {\n"
              + i(indent + 1) + "// TODO: cast param to required type, invoke " + subject + "." + mm.name() + "(...)\n"
              + i(indent) + "}\n\n";
+    }
+
+    // ── Exception / throws helpers ──────────────────────────────────────────
+
+    /**
+     * Returns " throws ExType1, ExType2" if the method declares any thrown exceptions,
+     * otherwise empty string.  Applied to success and parameterized test signatures so
+     * checked exceptions don't cause compile errors in the generated test.
+     */
+    private String checkedThrowsClause(MethodMetadata mm) {
+        if (!mm.throwsExceptions()) return "";
+        return " throws " + String.join(", ", mm.thrownExceptions());
     }
 
     // ── Private helpers ─────────────────────────────────────────────────────
