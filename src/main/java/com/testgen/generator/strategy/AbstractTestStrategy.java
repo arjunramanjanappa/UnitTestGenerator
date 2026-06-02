@@ -357,14 +357,14 @@ public abstract class AbstractTestStrategy implements TestStrategy {
               .append(" — stub on spy to isolate ClassA logic\n");
         }
         for (MethodMetadata mm : m.overriddenMethods()) {
-            sb.append(emitSpyStub(mm, "subject", indent));
+            sb.append(emitSpyStub(mm, "subject", indent, "", m));
 
             // super.xxx() calls within overridden method — also stub on spy
             if (mm.hasSuperCalls()) {
                 for (String superCall : mm.superMethodCalls()) {
                     if (mm.name().equals(superCall)) {
                         sb.append(emitSpyStub(mm, "subject", indent,
-                                " // super." + superCall + "() — prevent real " + m.superClassName() + " execution"));
+                                " // super." + superCall + "() — prevent real " + m.superClassName() + " execution", m));
                     } else {
                         sb.append(i(indent))
                           .append("// TODO: stub super.").append(superCall)
@@ -390,7 +390,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                       .append(" — stub ALL on spy to prevent real ").append(parent.className()).append(" execution\n");
                     for (MethodMetadata mm : inheritedMethods) {
                         sb.append(emitSpyStub(mm, "subject", indent,
-                                " // inherited from " + parent.className()));
+                                " // inherited from " + parent.className(), m));
                         overriddenNames.add(mm.name()); // dedup across ancestor levels
                     }
                 }
@@ -412,20 +412,50 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     /** Emits a lenient doReturn/doNothing stub on the given target (spy or parent var). */
     private String emitSpyStub(MethodMetadata mm, String target, int indent) {
-        return emitSpyStub(mm, target, indent, "");
+        return emitSpyStub(mm, target, indent, "", null);
     }
 
     private String emitSpyStub(MethodMetadata mm, String target, int indent, String comment) {
+        return emitSpyStub(mm, target, indent, comment, null);
+    }
+
+    private String emitSpyStub(MethodMetadata mm, String target, int indent,
+                                String comment, ClassMetadata m) {
         String matchers = mm.parameters().stream()
                 .map(p -> "any(" + p.type().replaceAll("<.*>", "").trim() + ".class)")
                 .collect(Collectors.joining(", "));
         if (mm.hasReturnValue()) {
-            return i(indent) + "lenient().doReturn(" + defaultValue(mm.returnType()) + ").when("
+            // Use typed return value when class metadata available (concreteClassNames / paramTypeRegistry)
+            String returnVal = m != null
+                    ? typedReturnValue(mm.returnType(), m)
+                    : defaultValue(mm.returnType());
+            return i(indent) + "lenient().doReturn(" + returnVal + ").when("
                     + target + ")." + mm.name() + "(" + matchers + ");" + comment + "\n";
         } else {
             return i(indent) + "lenient().doNothing().when(" + target + ")." + mm.name()
                     + "(" + matchers + ");" + comment + "\n";
         }
+    }
+
+    /**
+     * Returns a typed return value for spy stubs based on what we know about the type:
+     *  - In concreteClassNames (source root)  → TypeTestData.buildValidType()
+     *  - In paramTypeRegistry (parsed)        → new Type()
+     *  - Primitive / standard type            → defaultValue()
+     *  - Unknown external type                → null
+     */
+    private String typedReturnValue(String rawReturnType, ClassMetadata m) {
+        String rawType = rawReturnType.replaceAll("<.*>", "").trim();
+        String base    = defaultValue(rawReturnType);
+        if (!base.startsWith("null")) return base; // primitive / standard type
+
+        if (m.concreteClassNames() != null && m.concreteClassNames().contains(rawType)) {
+            return rawType + "TestData.buildValid" + rawType + "()";
+        }
+        if (m.paramTypeRegistry() != null && m.paramTypeRegistry().containsKey(rawType)) {
+            return "new " + rawType + "()";
+        }
+        return "null"; // external type — no typed value available
     }
 
     // ── @BeforeEach ─────────────────────────────────────────────────────────
@@ -453,14 +483,16 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         boolean hasSuperCalls = m.methods().stream().anyMatch(MethodMetadata::hasSuperCalls);
         if (hasSuperCalls) return true;
 
-        // b) any testable method calls other methods declared in this same class
-        Set<String> ownMethodNames = m.methods().stream()
+        // b) any testable method calls other public/protected methods in THIS class
+        // (private methods can't be stubbed by Mockito — spy only helps for public/protected helpers)
+        Set<String> stubbableOwnMethods = m.methods().stream()
+                .filter(mm -> mm.isPublic() || mm.isProtected())
                 .map(MethodMetadata::name)
                 .collect(Collectors.toSet());
         return m.methods().stream()
                 .filter(MethodMetadata::isTestable)
                 .flatMap(mm -> mm.helperMethodCalls().stream())
-                .anyMatch(ownMethodNames::contains);
+                .anyMatch(stubbableOwnMethods::contains);
     }
 
     /**
@@ -576,6 +608,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         for (String helperName : helperNames) {
             m.methods().stream()
               .filter(mm -> mm.name().equals(helperName))
+              .filter(mm -> mm.isPublic() || mm.isProtected()) // private methods cannot be stubbed by Mockito
               .findFirst()
               .ifPresent(mm -> {
                   String matchers = mm.parameters().stream()
@@ -583,7 +616,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                           .collect(Collectors.joining(", "));
                   if (mm.hasReturnValue()) {
                       sb.append(i(indent))
-                        .append("lenient().doReturn(").append(defaultValue(mm.returnType()))
+                        .append("lenient().doReturn(").append(typedReturnValue(mm.returnType(), m))
                         .append(").when(").append(subject).append(").").append(helperName)
                         .append("(").append(matchers).append(");\n");
                   } else {
