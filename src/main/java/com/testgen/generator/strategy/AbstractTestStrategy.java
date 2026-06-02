@@ -700,8 +700,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("void ")
           .append(convention.unitTestMethod(mm.name(), "success"))
           .append("()").append(throwsClause).append(" {\n");
-        sb.append(i(indent + 1)).append("// given\n");
+        sb.append(i(indent + 1)).append("// given — params auto-initialized with typed defaults\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
+
+        // Mock stub hints using typed matchers (any(TypeName.class)) for each domain param
+        buildMockStubHints(mm, m, sb, indent + 1);
 
         if (mm.isProtected()) {
             sb.append(i(indent + 1)).append("// when — protected access via ReflectionTestUtils (BAU class not modified)\n");
@@ -714,9 +717,9 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent + 1)).append("// then\n");
         if (mm.hasReturnValue()) {
             sb.append(i(indent + 1)).append("assertNotNull(result);\n");
-            sb.append(i(indent + 1)).append("// TODO: add specific assertions\n");
+            buildResultAssertHints(mm, m, sb, indent + 1);
         } else {
-            sb.append(i(indent + 1)).append("// TODO: verify interactions — e.g. verify(mockDep).someMethod(any());\n");
+            buildVerifyHints(mm, m, sb, indent + 1);
         }
         sb.append(i(indent)).append("}\n\n");
 
@@ -782,6 +785,87 @@ public abstract class AbstractTestStrategy implements TestStrategy {
              + i(indent) + "void " + testName + "(String param)" + throwsDecl + " {\n"
              + i(indent + 1) + "// TODO: cast param to required type, invoke " + subject + "." + mm.name() + "(...)\n"
              + i(indent) + "}\n\n";
+    }
+
+    // ── Auto-init aware assertion/stub hints ────────────────────────────────
+
+    /**
+     * Emits commented-out mock stub hints using typed matchers — any(TypeName.class) —
+     * so developers know exactly which type to match.
+     * Only emits hints for domain-object params (non-primitive / non-standard types).
+     */
+    private void buildMockStubHints(MethodMetadata mm, ClassMetadata m,
+                                     StringBuilder sb, int indent) {
+        List<MethodMetadata.ParameterMetadata> domainParams = mm.parameters().stream()
+                .filter(p -> defaultValue(p.type()).startsWith("null"))
+                .toList();
+        if (domainParams.isEmpty()) return;
+
+        sb.append(i(indent)).append("// Stub mock dependencies — use typed matcher for initialized params:\n");
+        for (MethodMetadata.ParameterMetadata p : domainParams) {
+            String rawType = p.type().replaceAll("<.*>", "").trim();
+            sb.append(i(indent))
+              .append("// when(<mockDep>.<method>(any(").append(rawType).append(".class)))")
+              .append(".thenReturn(").append(typedReturnHint(rawType, m)).append(");\n");
+        }
+    }
+
+    /**
+     * Emits field-level assertion hints when the return type is a known domain object.
+     */
+    private void buildResultAssertHints(MethodMetadata mm, ClassMetadata m,
+                                         StringBuilder sb, int indent) {
+        String rawReturn = mm.returnType().replaceAll("<.*>", "").trim();
+        if (defaultValue(mm.returnType()).startsWith("null")) {
+            // Return type is a domain object — suggest field assertions
+            com.testgen.parser.ClassMetadata retMeta =
+                    m.paramTypeRegistry() != null ? m.paramTypeRegistry().get(rawReturn) : null;
+            if (retMeta != null && !retMeta.fields().isEmpty()) {
+                sb.append(i(indent)).append("// Assert result fields (auto-initialized type — update as needed):\n");
+                retMeta.fields().stream()
+                        .filter(f -> !f.isInjected() && !f.isApplicationContext() && !f.isValue())
+                        .limit(3) // top 3 fields to keep it concise
+                        .forEach(f -> sb.append(i(indent))
+                                .append("// assertNotNull(result.get").append(toSetterSuffix(f.name())).append("());\n"));
+            } else if (m.concreteClassNames() != null && m.concreteClassNames().contains(rawReturn)) {
+                sb.append(i(indent)).append("// assertNotNull(result); // ").append(rawReturn)
+                  .append("TestData.buildValid").append(rawReturn).append("() shows available fields\n");
+            } else {
+                sb.append(i(indent)).append("// TODO: assert specific fields on result\n");
+            }
+        } else {
+            sb.append(i(indent)).append("// TODO: assertEquals(expectedValue, result);\n");
+        }
+    }
+
+    /**
+     * Emits typed verify hints for void methods using initialized params.
+     */
+    private void buildVerifyHints(MethodMetadata mm, ClassMetadata m,
+                                   StringBuilder sb, int indent) {
+        if (mm.parameters().isEmpty()) {
+            sb.append(i(indent)).append("// TODO: verify(mockDep).someMethod();\n");
+            return;
+        }
+        sb.append(i(indent)).append("// Verify interactions using initialized params:\n");
+        for (MethodMetadata.ParameterMetadata p : mm.parameters()) {
+            String rawType = p.type().replaceAll("<.*>", "").trim();
+            boolean isDomain = defaultValue(p.type()).startsWith("null");
+            String matcher = isDomain ? "any(" + rawType + ".class)" : p.name();
+            sb.append(i(indent))
+              .append("// verify(<mockDep>).<method>(").append(matcher).append(");\n");
+        }
+    }
+
+    /** Returns an appropriate return-value hint for mock stub setup. */
+    private String typedReturnHint(String rawType, ClassMetadata m) {
+        if (m.concreteClassNames() != null && m.concreteClassNames().contains(rawType)) {
+            return rawType + "TestData.buildValid" + rawType + "()";
+        }
+        com.testgen.parser.ClassMetadata meta =
+                m.paramTypeRegistry() != null ? m.paramTypeRegistry().get(rawType) : null;
+        if (meta != null) return "new " + rawType + "()";
+        return "mock(" + rawType + ".class)";
     }
 
     // ── Exception / throws helpers ──────────────────────────────────────────
