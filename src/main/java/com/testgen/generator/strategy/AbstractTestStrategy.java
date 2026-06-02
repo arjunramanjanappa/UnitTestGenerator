@@ -433,17 +433,34 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     /**
      * Determines whether to use spy() or @InjectMocks for the Unit nested class.
      *
-     * spy() is required when:
-     *   - Class has a parent (need to stub ALL inherited methods on spy)
-     *   - Class has internal helper methods (populate/build/etc.) that must be stubbed
+     * spy() is needed when there are actual method calls in the class body that
+     * must be intercepted to isolate the logic under test:
      *
-     * @InjectMocks is sufficient when neither of the above applies:
-     *   - Simple class, no superclass, no helpers
-     *   - Mockito handles injection automatically — works even without no-arg constructor
+     *   a) super.xxx() calls — delegate to parent; must be stubbed on spy to prevent
+     *      real parent execution (regardless of whether a superclass exists)
+     *
+     *   b) internal method calls — calls to other methods declared in THIS class;
+     *      must be stubbed on spy so only the entry-point logic is exercised
+     *      (structural detection — no name-prefix restriction)
+     *
+     * @InjectMocks is sufficient when NEITHER applies:
+     *   - No super calls, no internal helper calls
+     *   - Works even without a no-arg constructor (Mockito handles injection)
+     *   - Having a superclass alone is NOT enough — only spy if there are actual calls
      */
     protected boolean requiresSpyPattern(ClassMetadata m) {
-        if (m.hasSuperClass()) return true;
-        return m.methods().stream().anyMatch(MethodMetadata::hasHelperCalls);
+        // a) any method body contains super.xxx() calls
+        boolean hasSuperCalls = m.methods().stream().anyMatch(MethodMetadata::hasSuperCalls);
+        if (hasSuperCalls) return true;
+
+        // b) any testable method calls other methods declared in this same class
+        Set<String> ownMethodNames = m.methods().stream()
+                .map(MethodMetadata::name)
+                .collect(Collectors.toSet());
+        return m.methods().stream()
+                .filter(MethodMetadata::isTestable)
+                .flatMap(mm -> mm.helperMethodCalls().stream())
+                .anyMatch(ownMethodNames::contains);
     }
 
     /**
@@ -541,10 +558,16 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * to prevent complex internal logic from executing during unit tests.
      */
     protected String buildHelperMethodStubs(ClassMetadata m, String subject, int indent) {
-        // Collect unique helper names referenced in any testable method body
+        // Collect method names that are: (a) called from a testable method body, AND
+        // (b) actually declared in this class (not false-positives from no-scope calls to external methods)
+        Set<String> ownMethodNames = m.methods().stream()
+                .map(MethodMetadata::name)
+                .collect(Collectors.toSet());
+
         Set<String> helperNames = m.methods().stream()
                 .filter(MethodMetadata::isTestable)
                 .flatMap(mm -> mm.helperMethodCalls().stream())
+                .filter(ownMethodNames::contains)   // only stub methods declared in THIS class
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         if (helperNames.isEmpty()) return "";
 

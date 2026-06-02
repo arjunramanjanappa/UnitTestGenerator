@@ -205,9 +205,7 @@ public class JavaClassParser {
                 .toList();
     }
 
-    private static final Set<String> HELPER_PREFIXES = Set.of(
-            "populate", "build", "create", "map", "assemble", "construct", "prepare", "setup"
-    );
+    // No name-prefix filter — any internal method call in this class is a structural helper candidate
 
     private MethodMetadata toMethodMetadata(MethodDeclaration method) {
         List<String> annotations = extractAnnotationNames(method);
@@ -238,12 +236,13 @@ public class JavaClassParser {
                 .distinct()
                 .toList();
 
-        // Pattern D: internal helper method calls (no scope / this scope, helper prefix)
+        // Pattern D: internal method calls — any call with no scope or explicit 'this' scope
+        // (structural detection: name-agnostic; any same-class call is a potential helper to stub)
         List<String> helperCalls = allCalls.stream()
                 .filter(call -> call.getScope().isEmpty()
                         || call.getScope().filter(s -> s instanceof ThisExpr).isPresent())
                 .map(MethodCallExpr::getNameAsString)
-                .filter(name -> HELPER_PREFIXES.stream().anyMatch(name::startsWith))
+                .filter(name -> !name.equals(method.getNameAsString())) // exclude self-recursive
                 .distinct()
                 .toList();
 
