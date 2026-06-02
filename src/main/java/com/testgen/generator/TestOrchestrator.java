@@ -120,6 +120,9 @@ public class TestOrchestrator {
                 // Feature 4: attach concrete class name set for @Spy vs @Mock decisions
                 meta = meta.withConcreteClassNames(concreteClassNames);
 
+                // Resolve parsed metadata for types used in method params (for typed inline init)
+                meta = meta.withParamTypeRegistry(resolveParamTypeRegistry(meta, fileIndex));
+
                 TestStrategy strategy = pickStrategy(meta, xmlRoutes);
                 List<GeneratedTest> tests = new ArrayList<>(strategy.generate(meta, convention));
                 tests.add(dataBuilderGenerator.generate(meta));
@@ -257,6 +260,27 @@ public class TestOrchestrator {
                 .filter(ifaceIndex::containsKey)
                 .flatMap(iface -> classParser.parseInterfaceDefaultMethods(ifaceIndex.get(iface)).stream())
                 .collect(Collectors.toList());
+    }
+
+    // ── Param type registry (typed inline init for non-TestData types) ──────
+
+    /**
+     * For every domain-object type used as a method parameter in this class,
+     * tries to find its source file in fileIndex and parse its ClassMetadata.
+     * Strategies use this to generate typed field-setter calls instead of null.
+     */
+    private Map<String, ClassMetadata> resolveParamTypeRegistry(ClassMetadata m,
+                                                                  Map<String, Path> fileIndex) {
+        Map<String, ClassMetadata> registry = new HashMap<>();
+        m.methods().forEach(mm -> mm.parameters().forEach(p -> {
+            String rawType = p.type().replaceAll("<.*>", "").trim();
+            if (registry.containsKey(rawType)) return;
+            Path srcFile = fileIndex.get(rawType);
+            if (srcFile == null) return;
+            classParser.parse(srcFile).ifPresent(parsed ->
+                    registry.put(rawType, classifier.classify(parsed)));
+        }));
+        return registry.isEmpty() ? Map.of() : registry;
     }
 
     // ── Strategy selection ──────────────────────────────────────────────────

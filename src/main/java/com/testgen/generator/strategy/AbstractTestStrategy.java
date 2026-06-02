@@ -701,7 +701,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
           .append(convention.unitTestMethod(mm.name(), "success"))
           .append("()").append(throwsClause).append(" {\n");
         sb.append(i(indent + 1)).append("// given\n");
-        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames());
+        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
         if (mm.isProtected()) {
             sb.append(i(indent + 1)).append("// when — protected access via ReflectionTestUtils (BAU class not modified)\n");
@@ -743,7 +743,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("void ")
           .append(convention.exceptionTestMethod(mm.name(), exType)).append("() {\n");
         sb.append(i(indent + 1)).append("// given\n");
-        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames());
+        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
         // Specific doThrow stub wired to the exact exception type
         sb.append(i(indent + 1))
@@ -806,30 +806,79 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     /**
      * Generates local variable declarations for each method parameter.
      *
-     * For domain object types (non-primitive, non-standard):
-     *  - If the type is found in concreteClassNames (i.e. scanned from the source root
-     *    and will have a companion *TestData.java generated), reference the TestData builder.
-     *  - Otherwise fall back to null with a TODO comment — avoids referencing a TestData
-     *    class that doesn't exist (e.g. external library types like MSBaseVO from a shared jar).
+     * Resolution order for domain-object types (non-primitive, non-standard):
+     *  1. Type is in concreteClassNames (scanned source root, TestData will be generated)
+     *       → TypeTestData.buildValidType()
+     *  2. Type is in paramTypeRegistry (source found, field metadata available)
+     *       → new TypeName() + typed field setters (one line per field)
+     *  3. External / unknown type (not in source root at all)
+     *       → new TypeName() — no-arg constructor; at least avoids NPE
      */
     private void buildParamSetup(MethodMetadata mm, StringBuilder sb, int indent,
                                   Set<String> concreteClassNames) {
+        buildParamSetup(mm, sb, indent, concreteClassNames, Map.of());
+    }
+
+    private void buildParamSetup(MethodMetadata mm, StringBuilder sb, int indent,
+                                  Set<String> concreteClassNames,
+                                  Map<String, com.testgen.parser.ClassMetadata> paramTypeRegistry) {
         for (MethodMetadata.ParameterMetadata p : mm.parameters()) {
             String rawType   = p.type().replaceAll("<.*>", "").trim();
             String value     = defaultValue(p.type());
             boolean isDomain = value.startsWith("null"); // non-primitive, non-standard type
-            sb.append(i(indent)).append(p.type()).append(" ").append(p.name()).append(" = ");
-            if (isDomain && concreteClassNames != null && concreteClassNames.contains(rawType)) {
-                // Type is in the source root — its TestData file will be generated
-                sb.append(rawType).append("TestData.buildValid").append(rawType).append("();\n");
-            } else if (isDomain) {
-                // External / unknown type — TestData may not exist; leave as null with TODO
-                sb.append("null; // TODO: provide ").append(rawType)
-                  .append(" — if ").append(rawType).append("TestData exists, use .buildValid").append(rawType).append("()\n");
-            } else {
-                sb.append(value).append(";\n");
+
+            if (!isDomain) {
+                sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
+                  .append(" = ").append(value).append(";\n");
+                continue;
             }
+
+            // Check concreteClassNames first — TestData file will be generated for it
+            if (concreteClassNames != null && concreteClassNames.contains(rawType)) {
+                sb.append(i(indent)).append(p.type()).append(" ").append(p.name()).append(" = ")
+                  .append(rawType).append("TestData.buildValid").append(rawType).append("();\n");
+                continue;
+            }
+
+            // Check paramTypeRegistry — source found, generate typed inline init
+            com.testgen.parser.ClassMetadata typeMeta =
+                    paramTypeRegistry != null ? paramTypeRegistry.get(rawType) : null;
+            if (typeMeta != null) {
+                sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
+                  .append(" = new ").append(rawType).append("();\n");
+                for (com.testgen.parser.FieldMetadata f : typeMeta.fields()) {
+                    if (f.isInjected() || f.isApplicationContext() || f.isValue()) continue;
+                    String fv = defaultValue(f.type());
+                    if (!fv.startsWith("null")) {
+                        // Only set fields where we can generate a meaningful typed value
+                        sb.append(i(indent)).append(p.name()).append(".set")
+                          .append(toSetterSuffix(f.name())).append("(").append(fv).append(");\n");
+                    }
+                }
+                continue;
+            }
+
+            // External / truly unknown type — use no-arg constructor; avoids NPE vs null
+            sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
+              .append(" = new ").append(rawType).append("(); // external type — set required fields manually\n");
         }
+    }
+
+    /**
+     * Converts a field name to a JavaBeans setter suffix, handling underscores.
+     * e.g. "myField" → "MyField", "my_field" → "MyField"
+     */
+    private String toSetterSuffix(String fieldName) {
+        if (fieldName == null || fieldName.isEmpty()) return fieldName;
+        if (!fieldName.contains("_")) {
+            return Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1);
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String part : fieldName.split("_")) {
+            if (part.isEmpty()) continue;
+            sb.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+        }
+        return sb.toString();
     }
 
     private void buildDirectCall(MethodMetadata mm, String subject, StringBuilder sb, int indent) {

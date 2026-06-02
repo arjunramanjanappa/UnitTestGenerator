@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -92,7 +93,7 @@ public class JavaClassParser {
                     superClass, interfaces,
                     cls.isAbstract(), false,
                     hasLombok, hasBuilder, genericTypeParams, null,
-                    List.of(), List.of(), Set.of()   // parentChain / interfaceDefaults / concreteNames resolved later
+                    List.of(), List.of(), Set.of(), Map.of()  // parentChain / interfaceDefaults / concreteNames / paramTypeRegistry — resolved later
             ));
 
         } catch (IOException e) {

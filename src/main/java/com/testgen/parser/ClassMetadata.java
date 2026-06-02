@@ -3,6 +3,7 @@ package com.testgen.parser;
 import com.testgen.classifier.ClassType;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public record ClassMetadata(
@@ -24,7 +25,8 @@ public record ClassMetadata(
         String springBootVersion,
         List<ClassMetadata> parentChain,             // resolved parent classes (direct → grandparent …)
         List<MethodMetadata> interfaceDefaultMethods, // default methods from implemented interfaces
-        Set<String> concreteClassNames               // all non-interface class names in the scanned source root
+        Set<String> concreteClassNames,              // all non-interface class names in the scanned source root
+        Map<String, ClassMetadata> paramTypeRegistry // parsed metadata for types used in method params
 ) {
     public String fullClassName() {
         return packageName.isEmpty() ? className : packageName + "." + className;
@@ -86,34 +88,41 @@ public record ClassMetadata(
         return new ClassMetadata(className, packageName, sourceFilePath, type,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames);
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry);
     }
 
     public ClassMetadata withSpringBootVersion(String version) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                version, parentChain, interfaceDefaultMethods, concreteClassNames);
+                version, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry);
     }
 
     public ClassMetadata withParentChain(List<ClassMetadata> chain) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, chain, interfaceDefaultMethods, concreteClassNames);
+                springBootVersion, chain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry);
     }
 
     public ClassMetadata withInterfaceDefaultMethods(List<MethodMetadata> defaults) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, defaults, concreteClassNames);
+                springBootVersion, parentChain, defaults, concreteClassNames, paramTypeRegistry);
     }
 
     public ClassMetadata withConcreteClassNames(Set<String> names) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, names);
+                springBootVersion, parentChain, interfaceDefaultMethods, names, paramTypeRegistry);
+    }
+
+    public ClassMetadata withParamTypeRegistry(Map<String, ClassMetadata> registry) {
+        return new ClassMetadata(className, packageName, sourceFilePath, classType,
+                annotations, fields, methods, imports, superClassName, interfaces,
+                isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, registry);
     }
 }
