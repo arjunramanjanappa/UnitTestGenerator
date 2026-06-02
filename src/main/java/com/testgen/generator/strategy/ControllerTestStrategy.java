@@ -21,7 +21,7 @@ public class ControllerTestStrategy extends AbstractTestStrategy {
         String cls = m.className();
         StringBuilder sb = new StringBuilder();
         sb.append("package ").append(m.packageName()).append(";\n\n");
-        sb.append(commonImports());
+        sb.append(commonImports(m.springBootVersion()));
         sb.append("import org.springframework.test.web.servlet.MockMvc;\n");
         sb.append("import org.springframework.test.web.servlet.setup.MockMvcBuilders;\n");
         sb.append("import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;\n");
@@ -89,7 +89,7 @@ public class ControllerTestStrategy extends AbstractTestStrategy {
 
         sb.append(i(2)).append("@Autowired\n");
         sb.append(i(2)).append("private MockMvc mockMvc;\n\n");
-        sb.append(buildMockBeanDeclarations(m.mockCandidates(), 2));
+        sb.append(buildMockBeanDeclarations(m.mockCandidates(), 2, m.springBootVersion()));
         sb.append(buildBeforeEach(m, "mockMvc", true, 2));
 
         for (MethodMetadata mm : m.ownPublicMethods()) {

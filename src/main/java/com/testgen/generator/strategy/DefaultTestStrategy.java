@@ -23,7 +23,7 @@ public class DefaultTestStrategy extends AbstractTestStrategy {
         String cls = m.className();
         StringBuilder sb = new StringBuilder();
         sb.append("package ").append(m.packageName()).append(";\n\n");
-        sb.append(commonImports());
+        sb.append(commonImports(m.springBootVersion()));
         sb.append("\n");
         sb.append("class ").append(cls).append("Test {\n\n");
 
@@ -65,7 +65,7 @@ public class DefaultTestStrategy extends AbstractTestStrategy {
             sb.append(i(1)).append("@SpringBootTest\n");
         }
         sb.append(i(1)).append("class Functional {\n\n");
-        sb.append(buildMockBeanDeclarations(m.mockCandidates(), 2));
+        sb.append(buildMockBeanDeclarations(m.mockCandidates(), 2, m.springBootVersion()));
         sb.append(i(2)).append("@Test\n");
         sb.append(i(2)).append("void contextLoads() {\n");
         sb.append(i(3)).append("// TODO: assert context loaded correctly\n");

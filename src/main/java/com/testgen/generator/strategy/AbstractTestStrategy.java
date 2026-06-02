@@ -112,30 +112,58 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     // ── Common import blocks ────────────────────────────────────────────────
 
+    /**
+     * Spring Boot 3.4 moved @MockBean → @MockitoBean (new package).
+     * We pick the right import based on the detected target project version.
+     */
+    protected String commonImports(String springBootVersion) {
+        boolean isNew = isSB34OrLater(springBootVersion);
+        String mockBeanImport = isNew
+                ? "import org.springframework.test.context.bean.override.mockito.MockitoBean;"
+                : "import org.springframework.boot.test.mock.mockito.MockBean;";
+        return "import org.junit.jupiter.api.*;\n"
+             + "import org.junit.jupiter.api.extension.ExtendWith;\n"
+             + "import org.junit.jupiter.params.ParameterizedTest;\n"
+             + "import org.junit.jupiter.params.provider.CsvSource;\n"
+             + "import org.junit.jupiter.params.provider.EnumSource;\n"
+             + "import org.mockito.*;\n"
+             + "import org.mockito.junit.jupiter.MockitoExtension;\n"
+             + "import org.springframework.beans.factory.annotation.Autowired;\n"
+             + "import org.springframework.boot.test.context.SpringBootTest;\n"
+             + mockBeanImport + "\n"
+             + "import org.springframework.context.ApplicationContext;\n"
+             + "import org.springframework.test.context.ActiveProfiles;\n"
+             + "import org.springframework.test.util.ReflectionTestUtils;\n"
+             + "import java.math.BigDecimal;\n"
+             + "import java.math.BigInteger;\n"
+             + "import java.time.LocalDate;\n"
+             + "import java.time.LocalDateTime;\n"
+             + "import java.util.*;\n"
+             + "import static org.junit.jupiter.api.Assertions.*;\n"
+             + "import static org.mockito.Mockito.*;\n"
+             + "import static org.mockito.ArgumentMatchers.*;\n";
+    }
+
+    /** Fallback for callers that don't have a version yet. */
     protected String commonImports() {
-        return """
-                import org.junit.jupiter.api.*;
-                import org.junit.jupiter.api.extension.ExtendWith;
-                import org.junit.jupiter.params.ParameterizedTest;
-                import org.junit.jupiter.params.provider.CsvSource;
-                import org.junit.jupiter.params.provider.EnumSource;
-                import org.mockito.*;
-                import org.mockito.junit.jupiter.MockitoExtension;
-                import org.springframework.beans.factory.annotation.Autowired;
-                import org.springframework.boot.test.context.SpringBootTest;
-                import org.springframework.boot.test.mock.mockito.MockBean;
-                import org.springframework.context.ApplicationContext;
-                import org.springframework.test.context.ActiveProfiles;
-                import org.springframework.test.util.ReflectionTestUtils;
-                import java.math.BigDecimal;
-                import java.math.BigInteger;
-                import java.time.LocalDate;
-                import java.time.LocalDateTime;
-                import java.util.*;
-                import static org.junit.jupiter.api.Assertions.*;
-                import static org.mockito.Mockito.*;
-                import static org.mockito.ArgumentMatchers.*;
-                """;
+        return commonImports(null);
+    }
+
+    /** Returns the correct @MockBean / @MockitoBean annotation for the target project version. */
+    protected String mockBeanAnnotation(String springBootVersion) {
+        return isSB34OrLater(springBootVersion) ? "@MockitoBean" : "@MockBean";
+    }
+
+    private boolean isSB34OrLater(String version) {
+        if (version == null || version.isBlank()) return false;
+        try {
+            String[] parts = version.split("\\.");
+            int major = Integer.parseInt(parts[0]);
+            int minor = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+            return major > 3 || (major == 3 && minor >= 4);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     // ── Mock / MockBean declarations (Feature 4: @Spy for concrete types) ────
@@ -175,16 +203,22 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     }
 
     protected String buildMockBeanDeclarations(List<FieldMetadata> fields, int indent) {
+        return buildMockBeanDeclarations(fields, indent, null);
+    }
+
+    protected String buildMockBeanDeclarations(List<FieldMetadata> fields, int indent,
+                                                String springBootVersion) {
+        String annotation = mockBeanAnnotation(springBootVersion);
         StringBuilder sb = new StringBuilder();
         for (FieldMetadata f : fields) {
             if (f.isApplicationContext()) {
-                sb.append(i(indent)).append("@MockBean\n");
+                sb.append(i(indent)).append(annotation).append("\n");
                 sb.append(i(indent)).append("ApplicationContext ").append(f.name()).append(";\n\n");
             } else if (f.isMockCandidate()) {
                 if (f.isConstructorInjected()) {
                     sb.append(i(indent)).append("// Constructor-injected — wired via Spring context\n");
                 }
-                sb.append(i(indent)).append("@MockBean\n");
+                sb.append(i(indent)).append(annotation).append("\n");
                 sb.append(i(indent)).append("private ").append(f.type()).append(" ").append(f.name()).append(";\n\n");
             }
         }

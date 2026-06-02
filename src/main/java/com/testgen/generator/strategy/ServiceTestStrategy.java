@@ -21,7 +21,7 @@ public class ServiceTestStrategy extends AbstractTestStrategy {
         String cls = m.className();
         StringBuilder sb = new StringBuilder();
         sb.append("package ").append(m.packageName()).append(";\n\n");
-        sb.append(commonImports());
+        sb.append(commonImports(m.springBootVersion()));
         sb.append("\n");
         sb.append("class ").append(cls).append("Test {\n\n");
         sb.append(buildUnitNested(m));
@@ -59,7 +59,7 @@ public class ServiceTestStrategy extends AbstractTestStrategy {
         sb.append(i(1)).append("@SpringBootTest(classes = {").append(cls).append(".class})\n");
         sb.append(i(1)).append("class Functional {\n\n");
 
-        sb.append(buildMockBeanDeclarations(m.mockCandidates(), 2));
+        sb.append(buildMockBeanDeclarations(m.mockCandidates(), 2, m.springBootVersion()));
 
         sb.append(i(2)).append("@Autowired\n");
         sb.append(i(2)).append("private ").append(cls).append(" subject;\n\n");

@@ -20,7 +20,7 @@ public class RepositoryTestStrategy extends AbstractTestStrategy {
         String cls = m.className();
         StringBuilder sb = new StringBuilder();
         sb.append("package ").append(m.packageName()).append(";\n\n");
-        sb.append(commonImports());
+        sb.append(commonImports(m.springBootVersion()));
         sb.append("import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;\n");
         sb.append("import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;\n\n");
 

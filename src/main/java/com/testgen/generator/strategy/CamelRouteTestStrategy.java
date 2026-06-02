@@ -82,7 +82,7 @@ public class CamelRouteTestStrategy extends AbstractTestStrategy {
         String cls = m.className();
         StringBuilder sb = new StringBuilder();
         sb.append("package ").append(m.packageName()).append(";\n\n");
-        sb.append(commonImports());
+        sb.append(commonImports(m.springBootVersion()));
         sb.append("import org.apache.camel.CamelContext;\n");
         sb.append("import org.apache.camel.ProducerTemplate;\n");
         sb.append("import org.apache.camel.builder.AdviceWith;\n");
@@ -149,7 +149,7 @@ public class CamelRouteTestStrategy extends AbstractTestStrategy {
         sb.append(i(2)).append("private ProducerTemplate producerTemplate;\n\n");
         sb.append(i(2)).append("@Autowired\n");
         sb.append(i(2)).append("private CamelContext camelContext;\n\n");
-        sb.append(buildMockBeanDeclarations(m.mockCandidates(), 2));
+        sb.append(buildMockBeanDeclarations(m.mockCandidates(), 2, m.springBootVersion()));
 
         for (CamelRouteMetadata route : routes) {
             String fromUri = route.fromUri().isBlank() ? "direct:start" : route.fromUri();
