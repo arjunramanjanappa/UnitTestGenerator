@@ -360,8 +360,25 @@ public class DataBuilderGenerator {
                 .toList();
     }
 
+    /**
+     * Converts a field name to the JavaBeans setter suffix.
+     * Handles underscore-separated names by converting to camelCase:
+     *   fieldName   → FieldName   → setFieldName
+     *   class_Name  → ClassName   → setClassName
+     *   my_field_id → MyFieldId   → setMyFieldId
+     */
     private static String cap(String s) {
         if (s == null || s.isEmpty()) return s;
-        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+        if (!s.contains("_")) {
+            // Simple case — just uppercase the first letter
+            return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+        }
+        // Underscore-separated: split, capitalise each segment, join
+        StringBuilder sb = new StringBuilder();
+        for (String part : s.split("_")) {
+            if (part.isEmpty()) continue;
+            sb.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+        }
+        return sb.toString();
     }
 }
