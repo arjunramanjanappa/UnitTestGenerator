@@ -49,11 +49,6 @@ public class DefaultTestStrategy extends AbstractTestStrategy {
 
         sb.append(buildTestMethods(m, "subject", 2));
 
-        if (m.hasSuperClass()) {
-            sb.append(i(2)).append("// Inherited non-overridden methods covered by ")
-              .append(m.superClassName()).append("Test\n\n");
-        }
-
         sb.append(i(1)).append("}\n\n");
 
         // Functional nested — lightweight Spring context
@@ -72,8 +67,9 @@ public class DefaultTestStrategy extends AbstractTestStrategy {
         sb.append(buildFunctionalAopTestMethods(m, 2));
         sb.append(i(1)).append("}\n\n");
 
-        // Wire nested
-        sb.append(buildWireNested(m, "// Wire — verify full Spring context integration", 1));
+        // Wire nested — @Autowired subject wired by Spring context
+        sb.append(buildWireNested(m,
+                "@Autowired\n" + i(2) + "private " + cls + " subject;", 1));
 
         sb.append("}\n");
         return sb.toString();
