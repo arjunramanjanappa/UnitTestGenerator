@@ -396,11 +396,15 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 }
             }
         } else if (m.hasSuperClass()) {
-            // parentChain not resolved (source not in scan root) — note for developer
+            // parentChain empty — parent source is outside the scanned source root
+            // (e.g. framework class like RouteBuilder, or external library)
             sb.append(i(indent))
-              .append("// NOTE: ").append(m.superClassName()).append(" source not found in scan root.\n");
+              .append("// Parent ").append(m.superClassName())
+              .append(" is outside the source root (framework/external class).\n");
             sb.append(i(indent))
-              .append("// Manually stub any inherited methods: lenient().doReturn(...).when(subject).inheritedMethod(...);\n");
+              .append("// Stub inherited methods manually if they execute during tests:\n");
+            sb.append(i(indent))
+              .append("// lenient().doReturn(...).when(subject).inheritedMethodName(any(...));\n");
         }
 
         return sb.toString();

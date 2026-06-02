@@ -231,15 +231,32 @@ public class TestOrchestrator {
 
     // ── Parent chain resolution (Feature 1) ────────────────────────────────
 
+    /**
+     * Resolves the parent chain from the source root's file index.
+     *
+     * depth=0 → direct parent only (always resolved — needed for stub generation)
+     * depth=1 → direct parent + one grandparent
+     * depth=N → up to N+1 levels
+     *
+     * The direct parent is ALWAYS resolved when available in the source root,
+     * because generating ClassATest requires knowing ALL of ClassB's methods
+     * to stub them on the spy. The depth spinner controls additional ancestor levels.
+     */
     private List<ClassMetadata> resolveParentChain(ClassMetadata m,
                                                     Map<String, Path> fileIndex,
                                                     int depth) {
         List<ClassMetadata> chain = new ArrayList<>();
         ClassMetadata current = m;
-        for (int level = 0; level < depth; level++) {
+        // depth=0 → 1 level (direct parent); depth=N → N+1 levels
+        // <= ensures the direct parent is always resolved
+        for (int level = 0; level <= depth; level++) {
             if (!current.hasSuperClass()) break;
             Path parentFile = fileIndex.get(current.superClassName());
-            if (parentFile == null) break;
+            if (parentFile == null) {
+                log.warn("Parent class '{}' of '{}' not found in source root — stubs may be incomplete",
+                        current.superClassName(), m.className());
+                break;
+            }
 
             Optional<ClassMetadata> parsed = classParser.parse(parentFile);
             if (parsed.isEmpty()) break;
