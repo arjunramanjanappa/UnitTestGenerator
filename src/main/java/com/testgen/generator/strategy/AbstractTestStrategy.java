@@ -330,82 +330,98 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * Also handles super.xxx() calls within the method body.
      * For multi-level chains, ancestor stubs are appended after the direct parent stubs.
      */
+    /**
+     * Stubs ALL public/protected methods from the parent chain on the spy subject.
+     *
+     * With spy(new ClassA()), any inherited method that is NOT stubbed will execute
+     * the real ClassB implementation — which may call external dependencies, throw
+     * exceptions, or produce unexpected side effects.
+     *
+     * Two categories:
+     *  A) Overridden methods — ClassA overrides ClassB; stub on spy to isolate ClassA logic
+     *  B) Inherited non-overridden methods — ClassA inherits directly; stub on spy
+     *     to prevent real ClassB code from running during ClassA's unit tests
+     */
     protected String buildSuperClassStubs(ClassMetadata m, int indent) {
         if (!m.hasSuperClass()) return "";
         StringBuilder sb = new StringBuilder();
 
-        // ── Direct parent stubs ──────────────────────────────────────────────
-        sb.append(i(indent)).append("// Parent ").append(m.superClassName())
-          .append(" — non-overridden inherited methods covered by ").append(m.superClassName()).append("Test\n");
+        // Collect all overridden method names for dedup
+        Set<String> overriddenNames = m.overriddenMethods().stream()
+                .map(MethodMetadata::name)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
 
+        // ── A) Overridden methods — active stubs on spy ──────────────────────
+        if (!m.overriddenMethods().isEmpty()) {
+            sb.append(i(indent)).append("// A) Overridden methods from ").append(m.superClassName())
+              .append(" — stub on spy to isolate ClassA logic\n");
+        }
         for (MethodMetadata mm : m.overriddenMethods()) {
-            String matcherParams = mm.parameters().stream()
-                    .map(p -> "any(" + p.type() + ".class)")
-                    .collect(Collectors.joining(", "));
+            sb.append(emitSpyStub(mm, "subject", indent));
 
-            if (mm.hasReturnValue()) {
-                sb.append(i(indent))
-                  .append("// doReturn(").append(defaultValue(mm.returnType()))
-                  .append(").when(subject).").append(mm.name()).append("(").append(matcherParams)
-                  .append("); // stub overridden method on ").append(m.className()).append("\n");
-            } else {
-                sb.append(i(indent))
-                  .append("// doNothing().when(subject).").append(mm.name()).append("(").append(matcherParams)
-                  .append("); // stub void overridden method on ").append(m.className()).append("\n");
-            }
-
-            // super.xxx() calls — stub on parent spy to prevent real parent execution
+            // super.xxx() calls within overridden method — also stub on spy
             if (mm.hasSuperCalls()) {
                 for (String superCall : mm.superMethodCalls()) {
                     if (mm.name().equals(superCall)) {
-                        // lenient() — Mockito 5 strict stubbing: not every test exercises this super call path
-                        if (mm.hasReturnValue()) {
-                            sb.append(i(indent))
-                              .append("lenient().doReturn(").append(defaultValue(mm.returnType()))
-                              .append(").when(parent).").append(superCall).append("(").append(matcherParams)
-                              .append("); // intercept super.").append(superCall)
-                              .append("() — prevents real ").append(m.superClassName()).append(" execution\n");
-                        } else {
-                            sb.append(i(indent))
-                              .append("lenient().doNothing().when(parent).").append(superCall).append("(").append(matcherParams)
-                              .append("); // intercept super.").append(superCall)
-                              .append("() — prevents real ").append(m.superClassName()).append(" execution\n");
-                        }
+                        sb.append(emitSpyStub(mm, "subject", indent,
+                                " // super." + superCall + "() — prevent real " + m.superClassName() + " execution"));
                     } else {
                         sb.append(i(indent))
                           .append("// TODO: stub super.").append(superCall)
-                          .append("() on parent — doReturn(...).when(parent).").append(superCall).append("(...);\n");
+                          .append("() — doReturn(...).when(subject).").append(superCall).append("(...);\n");
                     }
                 }
             }
         }
 
-        // ── Multi-level ancestor stubs (Feature 1) ───────────────────────────
-        if (m.hasParentChain() && m.parentChain().size() > 1) {
-            for (int level = 1; level < m.parentChain().size(); level++) {
-                ClassMetadata ancestor = m.parentChain().get(level);
-                String varName = "ancestor" + level;
-                sb.append("\n").append(i(indent))
-                  .append("// Ancestor level ").append(level + 1).append(": ").append(ancestor.className())
-                  .append(" — stub methods overridden by ").append(m.parentChain().get(level - 1).className()).append("\n");
-                for (MethodMetadata mm : ancestor.overriddenMethods()) {
-                    String matcherParams = mm.parameters().stream()
-                            .map(p -> "any(" + p.type() + ".class)")
-                            .collect(Collectors.joining(", "));
-                    if (mm.hasReturnValue()) {
-                        sb.append(i(indent))
-                          .append("// doReturn(").append(defaultValue(mm.returnType()))
-                          .append(").when(").append(varName).append(").").append(mm.name())
-                          .append("(").append(matcherParams).append(");\n");
-                    } else {
-                        sb.append(i(indent))
-                          .append("// doNothing().when(").append(varName).append(").").append(mm.name())
-                          .append("(").append(matcherParams).append(");\n");
+        // ── B) Inherited non-overridden methods — stub to prevent real ClassB execution ──
+        if (m.hasParentChain()) {
+            for (int level = 0; level < m.parentChain().size(); level++) {
+                ClassMetadata parent = m.parentChain().get(level);
+                List<MethodMetadata> inheritedMethods = parent.methods().stream()
+                        .filter(MethodMetadata::isTestable)
+                        .filter(mm -> !mm.isFinal()) // final methods cannot be stubbed
+                        .filter(mm -> !overriddenNames.contains(mm.name())) // already stubbed above
+                        .toList();
+
+                if (!inheritedMethods.isEmpty()) {
+                    sb.append(i(indent))
+                      .append("// B) Inherited non-overridden methods from ").append(parent.className())
+                      .append(" — stub ALL on spy to prevent real ").append(parent.className()).append(" execution\n");
+                    for (MethodMetadata mm : inheritedMethods) {
+                        sb.append(emitSpyStub(mm, "subject", indent,
+                                " // inherited from " + parent.className()));
+                        overriddenNames.add(mm.name()); // dedup across ancestor levels
                     }
                 }
             }
+        } else if (m.hasSuperClass()) {
+            // parentChain not resolved (source not in scan root) — note for developer
+            sb.append(i(indent))
+              .append("// NOTE: ").append(m.superClassName()).append(" source not found in scan root.\n");
+            sb.append(i(indent))
+              .append("// Manually stub any inherited methods: lenient().doReturn(...).when(subject).inheritedMethod(...);\n");
         }
+
         return sb.toString();
+    }
+
+    /** Emits a lenient doReturn/doNothing stub on the given target (spy or parent var). */
+    private String emitSpyStub(MethodMetadata mm, String target, int indent) {
+        return emitSpyStub(mm, target, indent, "");
+    }
+
+    private String emitSpyStub(MethodMetadata mm, String target, int indent, String comment) {
+        String matchers = mm.parameters().stream()
+                .map(p -> "any(" + p.type().replaceAll("<.*>", "").trim() + ".class)")
+                .collect(Collectors.joining(", "));
+        if (mm.hasReturnValue()) {
+            return i(indent) + "lenient().doReturn(" + defaultValue(mm.returnType()) + ").when("
+                    + target + ")." + mm.name() + "(" + matchers + ");" + comment + "\n";
+        } else {
+            return i(indent) + "lenient().doNothing().when(" + target + ")." + mm.name()
+                    + "(" + matchers + ");" + comment + "\n";
+        }
     }
 
     // ── @BeforeEach ─────────────────────────────────────────────────────────
