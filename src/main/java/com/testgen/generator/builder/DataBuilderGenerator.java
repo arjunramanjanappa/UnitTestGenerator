@@ -44,7 +44,12 @@ public class DataBuilderGenerator {
         sb.append("import java.math.BigInteger;\n");
         sb.append("import java.time.LocalDate;\n");
         sb.append("import java.time.LocalDateTime;\n");
-        sb.append("import java.util.*;\n\n");
+        sb.append("import java.util.*;\n");
+        // Resolve imports for domain types referenced in this TestData file.
+        // Uses the source class's own imports as the authoritative FQN mapping —
+        // avoids ambiguity when multiple classes share the same simple name.
+        sb.append(buildResolvedImports(m));
+        sb.append("\n");
 
         sb.append("/**\n");
         sb.append(" * Test data factory for {@link ").append(m.className()).append("}.\n");
@@ -66,6 +71,79 @@ public class DataBuilderGenerator {
 
         sb.append("}\n");
         return sb.toString();
+    }
+
+    // ── Import resolution ───────────────────────────────────────────────────
+
+    /**
+     * Resolves FQN imports for every domain type referenced in this TestData file.
+     *
+     * Uses the source class's own import list as the authoritative mapping of
+     * simple name → FQN. This handles:
+     *  - Types from different packages (com.bank.vo.MSBaseVO vs com.other.MSBaseVO)
+     *  - Framework types already imported by the source class
+     *  - Multiple classes with the same simple name — picks the one the source class uses
+     *
+     * Types in the same package as the source class are also emitted as explicit imports
+     * so the TestData file is self-contained and compiles anywhere.
+     */
+    private String buildResolvedImports(ClassMetadata m) {
+        // Build simple-name → FQN map from the SOURCE CLASS's own import declarations
+        // — ClassA's imports are the ground truth for which MSBaseVO we mean
+        Map<String, String> simpleToFqn = new LinkedHashMap<>();
+        for (String fqn : m.imports()) {
+            String simple = fqn.contains(".")
+                    ? fqn.substring(fqn.lastIndexOf('.') + 1)
+                    : fqn;
+            simpleToFqn.put(simple, fqn);
+        }
+        // Also register the source class itself (for TestData that reference the main class)
+        simpleToFqn.put(m.className(), m.fullClassName());
+
+        // Collect all domain type simple names referenced in this TestData
+        Set<String> usedTypes = new LinkedHashSet<>();
+
+        // 1. Condition scenario param types (from buildConditionScenarioFactories)
+        m.methods().stream()
+                .filter(mm -> mm.conditionScenarios() != null)
+                .flatMap(mm -> mm.conditionScenarios().stream())
+                .map(ConditionScenario::paramType)
+                .forEach(usedTypes::add);
+
+        // 2. Injected field types (from buildDependencyFactories)
+        m.mockCandidates().stream()
+                .filter(f -> !f.isApplicationContext())
+                .map(FieldMetadata::simpleType)
+                .forEach(usedTypes::add);
+
+        // 3. Own non-injected field types used in setters (buildValidFactory etc.)
+        nonStaticFieldsRaw(m).stream()
+                .map(FieldMetadata::simpleType)
+                .forEach(usedTypes::add);
+
+        // 4. The class itself (for buildValid<Class>() return type)
+        usedTypes.add(m.className());
+
+        // Emit import for each type that was found in the source class's imports
+        StringBuilder sb = new StringBuilder();
+        for (String type : usedTypes) {
+            String fqn = simpleToFqn.get(type);
+            if (fqn == null) continue;
+            // Skip java.lang — it's always available
+            if (fqn.startsWith("java.lang.")) continue;
+            // Skip same-package types if class is in same package as the TestData
+            // (same package = no import needed, but we emit it anyway for clarity)
+            sb.append("import ").append(fqn).append(";\n");
+        }
+        return sb.toString();
+    }
+
+    /** Same as nonStaticFields but without the Autowired filter — used for import collection. */
+    private List<FieldMetadata> nonStaticFieldsRaw(ClassMetadata m) {
+        return m.fields().stream()
+                .filter(f -> !f.isApplicationContext())
+                .filter(f -> !f.isValue())
+                .toList();
     }
 
     // ── Valid factory (all constraints satisfied) ───────────────────────────
