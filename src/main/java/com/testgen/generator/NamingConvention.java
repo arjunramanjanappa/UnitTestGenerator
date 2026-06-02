@@ -22,7 +22,25 @@ public enum NamingConvention {
         };
     }
 
+    /**
+     * Generates a test method name that is unique even when the source method is overloaded.
+     * Appends a short param-type suffix when paramSuffix is non-empty.
+     * e.g. process(MSBaseVO) → test_process_MSBaseVO_success
+     *      process(String)   → test_process_String_success
+     */
+    public String unitTestMethod(String methodName, String scenario, String paramSuffix) {
+        String base = paramSuffix == null || paramSuffix.isBlank()
+                ? methodName
+                : methodName + "_" + paramSuffix;
+        return switch (this) {
+            case TEST_METHOD_SCENARIO -> "test_%s_%s".formatted(base, scenario);
+            case SHOULD_WHEN          -> "%s_should%s".formatted(base, cap(scenario));
+            case GIVEN_WHEN_THEN      -> "given_%s_when_%s_then_success".formatted(scenario, base);
+        };
+    }
+
     public String exceptionTestMethod(String methodName, String exceptionType) {
+        // Simplify to one exception test per method — strip "Exception"/"Error" suffix noise
         String ex = exceptionType.replace("Exception", "").replace("Error", "");
         return switch (this) {
             case TEST_METHOD_SCENARIO -> "test_%s_throws%s".formatted(methodName, ex);

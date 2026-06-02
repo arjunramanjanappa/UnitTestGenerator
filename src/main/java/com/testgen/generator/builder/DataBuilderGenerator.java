@@ -373,11 +373,13 @@ public class DataBuilderGenerator {
             // Simple case — just uppercase the first letter
             return Character.toUpperCase(s.charAt(0)) + s.substring(1);
         }
-        // Underscore-separated: split, capitalise each segment, join
+        // Underscore-separated: normalize each segment to lowercase then capitalise first letter
+        // CLASS_NAME → Class + Name → ClassName; ftr_amt → Ftr + Amt → FtrAmt
         StringBuilder sb = new StringBuilder();
         for (String part : s.split("_")) {
             if (part.isEmpty()) continue;
-            sb.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+            String lower = part.toLowerCase();
+            sb.append(Character.toUpperCase(lower.charAt(0))).append(lower.substring(1));
         }
         return sb.toString();
     }

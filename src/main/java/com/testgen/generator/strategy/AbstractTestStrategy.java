@@ -187,10 +187,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * We pick the right import based on the detected target project version.
      */
     protected String commonImports(String springBootVersion) {
-        boolean isNew = isSB34OrLater(springBootVersion);
-        String mockBeanImport = isNew
-                ? "import org.springframework.test.context.bean.override.mockito.MockitoBean;"
-                : "import org.springframework.boot.test.mock.mockito.MockBean;";
+        return commonImports();
+    }
+
+    protected String commonImports() {
         return "import org.junit.jupiter.api.*;\n"
              + "import org.junit.jupiter.api.extension.ExtendWith;\n"
              + "import org.junit.jupiter.params.ParameterizedTest;\n"
@@ -200,7 +200,6 @@ public abstract class AbstractTestStrategy implements TestStrategy {
              + "import org.mockito.junit.jupiter.MockitoExtension;\n"
              + "import org.springframework.beans.factory.annotation.Autowired;\n"
              + "import org.springframework.boot.test.context.SpringBootTest;\n"
-             + mockBeanImport + "\n"
              + "import org.springframework.context.ApplicationContext;\n"
              + "import org.springframework.test.context.ActiveProfiles;\n"
              + "import org.springframework.test.util.ReflectionTestUtils;\n"
@@ -214,26 +213,9 @@ public abstract class AbstractTestStrategy implements TestStrategy {
              + "import static org.mockito.ArgumentMatchers.*;\n";
     }
 
-    /** Fallback for callers that don't have a version yet. */
-    protected String commonImports() {
-        return commonImports(null);
-    }
-
-    /** Returns the correct @MockBean / @MockitoBean annotation for the target project version. */
+    /** @MockBean removed — use @Mock everywhere to avoid spring-boot-test dependency issues. */
     protected String mockBeanAnnotation(String springBootVersion) {
-        return isSB34OrLater(springBootVersion) ? "@MockitoBean" : "@MockBean";
-    }
-
-    private boolean isSB34OrLater(String version) {
-        if (version == null || version.isBlank()) return false;
-        try {
-            String[] parts = version.split("\\.");
-            int major = Integer.parseInt(parts[0]);
-            int minor = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
-            return major > 3 || (major == 3 && minor >= 4);
-        } catch (Exception e) {
-            return false;
-        }
+        return "@Mock";
     }
 
     // ── Mock / MockBean declarations (Feature 4: @Spy for concrete types) ────
@@ -278,7 +260,8 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     protected String buildMockBeanDeclarations(List<FieldMetadata> fields, int indent,
                                                 String springBootVersion) {
-        String annotation = mockBeanAnnotation(springBootVersion);
+        // @MockBean removed — @Mock works everywhere without spring-boot-test dependency
+        String annotation = "@Mock";
         StringBuilder sb = new StringBuilder();
         for (FieldMetadata f : fields) {
             if (f.isApplicationContext()) {
@@ -694,11 +677,12 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         // AOP warning — emitted before the @Test so the reader sees it immediately
         sb.append(buildAopWarningComment(mm, indent));
 
-        // Success test — declare throws so checked exceptions don't cause compile errors
+        // Success test — name includes param-type suffix to disambiguate overloaded methods
+        String paramSuffix  = buildParamSuffix(mm);
         String throwsClause = checkedThrowsClause(mm);
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ")
-          .append(convention.unitTestMethod(mm.name(), "success"))
+          .append(convention.unitTestMethod(mm.name(), "success", paramSuffix))
           .append("()").append(throwsClause).append(" {\n");
         sb.append(i(indent + 1)).append("// given — params auto-initialized with typed defaults\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
@@ -723,9 +707,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         }
         sb.append(i(indent)).append("}\n\n");
 
-        // Exception tests
-        for (String ex : mm.thrownExceptions()) {
-            sb.append(buildExceptionTestMethod(mm, subject, ex, indent, m));
+        // One exception test per method — pick the most specific declared exception
+        // (skip base Exception/Throwable if a more specific one is declared alongside it)
+        String primaryException = primaryException(mm);
+        if (primaryException != null) {
+            sb.append(buildExceptionTestMethod(mm, subject, primaryException, indent, m));
         }
 
         // @ParameterizedTest for primitive / String params
@@ -868,6 +854,37 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return "mock(" + rawType + ".class)";
     }
 
+    // ── Method name disambiguation helpers ─────────────────────────────────
+
+    /**
+     * Returns a short param-type suffix for overloaded method disambiguation.
+     * Empty string when the method has no params or only one param (no collision risk).
+     * e.g. process(MSBaseVO, String) → "MSBaseVO_String"
+     */
+    private String buildParamSuffix(MethodMetadata mm) {
+        if (mm.parameters().size() <= 1) return "";
+        return mm.parameters().stream()
+                .map(p -> p.type().replaceAll("<.*>", "").trim())
+                .collect(Collectors.joining("_"));
+    }
+
+    /**
+     * Returns the single exception type to test for a given method.
+     * Preference order:
+     *  1. Most specific declared exception (not Exception / Throwable)
+     *  2. If only broad exceptions declared, use the first one
+     *  3. null if no exceptions declared
+     */
+    private String primaryException(MethodMetadata mm) {
+        if (!mm.throwsExceptions()) return null;
+        List<String> exceptions = mm.thrownExceptions();
+        // Prefer custom/specific exceptions over base Exception/Throwable/RuntimeException
+        return exceptions.stream()
+                .filter(e -> !e.equals("Exception") && !e.equals("Throwable") && !e.equals("RuntimeException"))
+                .findFirst()
+                .orElse(exceptions.get(0));
+    }
+
     // ── Exception / throws helpers ──────────────────────────────────────────
 
     /**
@@ -960,7 +977,8 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         StringBuilder sb = new StringBuilder();
         for (String part : fieldName.split("_")) {
             if (part.isEmpty()) continue;
-            sb.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+            String lower = part.toLowerCase();
+            sb.append(Character.toUpperCase(lower.charAt(0))).append(lower.substring(1));
         }
         return sb.toString();
     }
