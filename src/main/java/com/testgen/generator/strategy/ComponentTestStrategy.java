@@ -40,10 +40,9 @@ public class ComponentTestStrategy extends AbstractTestStrategy {
         sb.append(i(1)).append("class Unit {\n\n");
 
         sb.append(buildMockDeclarations(m, 2));
-        sb.append(buildParentSpyDeclarations(m, 2));
 
         if (m.isAbstract()) {
-            sb.append(i(2)).append("// Abstract component — using CALLS_REAL_METHODS mock\n");
+            sb.append(i(2)).append("// Abstract class — spy via CALLS_REAL_METHODS\n");
             sb.append(i(2)).append("private ").append(cls).append(" subject;\n\n");
             sb.append(i(2)).append("@BeforeEach\n");
             sb.append(i(2)).append("void setUp() {\n");
@@ -54,7 +53,6 @@ public class ComponentTestStrategy extends AbstractTestStrategy {
             }
             sb.append(i(2)).append("}\n\n");
         } else {
-            sb.append(i(2)).append("@InjectMocks\n");
             sb.append(i(2)).append("private ").append(cls).append(" subject;\n\n");
             sb.append(buildBeforeEach(m, "subject", false, 2));
         }

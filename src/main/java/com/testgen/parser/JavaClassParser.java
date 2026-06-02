@@ -7,6 +7,7 @@ import com.github.javaparser.ast.PackageDeclaration;
 import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.nodeTypes.NodeWithAnnotations;
+import com.github.javaparser.ast.stmt.*;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.ReferenceType;
 import com.github.javaparser.ast.type.Type;
@@ -204,6 +205,10 @@ public class JavaClassParser {
                 .toList();
     }
 
+    private static final Set<String> HELPER_PREFIXES = Set.of(
+            "populate", "build", "create", "map", "assemble", "construct", "prepare", "setup"
+    );
+
     private MethodMetadata toMethodMetadata(MethodDeclaration method) {
         List<String> annotations = extractAnnotationNames(method);
         List<String> thrown      = method.getThrownExceptions().stream()
@@ -213,11 +218,50 @@ public class JavaClassParser {
                 .map(p -> new MethodMetadata.ParameterMetadata(p.getTypeAsString(), p.getNameAsString()))
                 .toList();
 
-        List<String> superCalls = method.findAll(MethodCallExpr.class).stream()
+        List<MethodCallExpr> allCalls = method.findAll(MethodCallExpr.class);
+
+        // Pattern A: super.xxx() calls
+        List<String> superCalls = allCalls.stream()
                 .filter(call -> call.getScope().filter(s -> s instanceof SuperExpr).isPresent())
                 .map(MethodCallExpr::getNameAsString)
                 .distinct()
                 .toList();
+
+        // Pattern A: static dependency calls — scope is an uppercase-starting NameExpr
+        List<String> staticCallClasses = allCalls.stream()
+                .filter(call -> call.getScope()
+                        .filter(s -> s instanceof NameExpr)
+                        .map(s -> ((NameExpr) s).getNameAsString())
+                        .filter(n -> !n.isEmpty() && Character.isUpperCase(n.charAt(0)))
+                        .isPresent())
+                .map(call -> ((NameExpr) call.getScope().get()).getNameAsString())
+                .distinct()
+                .toList();
+
+        // Pattern D: internal helper method calls (no scope / this scope, helper prefix)
+        List<String> helperCalls = allCalls.stream()
+                .filter(call -> call.getScope().isEmpty()
+                        || call.getScope().filter(s -> s instanceof ThisExpr).isPresent())
+                .map(MethodCallExpr::getNameAsString)
+                .filter(name -> HELPER_PREFIXES.stream().anyMatch(name::startsWith))
+                .distinct()
+                .toList();
+
+        // Pattern C: conditional logic
+        boolean hasConditionals = !method.findAll(IfStmt.class).isEmpty()
+                || !method.findAll(ConditionalExpr.class).isEmpty()
+                || !method.findAll(SwitchStmt.class).isEmpty();
+
+        // Pattern G: numeric comparisons
+        boolean hasNumericComparisons = method.findAll(BinaryExpr.class).stream()
+                .anyMatch(b -> b.getOperator() == BinaryExpr.Operator.LESS
+                        || b.getOperator() == BinaryExpr.Operator.GREATER
+                        || b.getOperator() == BinaryExpr.Operator.LESS_EQUALS
+                        || b.getOperator() == BinaryExpr.Operator.GREATER_EQUALS)
+                || allCalls.stream().anyMatch(c -> c.getNameAsString().equals("compareTo"));
+
+        // Pattern H: try/catch blocks
+        boolean hasTryCatch = !method.findAll(TryStmt.class).isEmpty();
 
         return new MethodMetadata(
                 method.getNameAsString(),
@@ -227,7 +271,8 @@ public class JavaClassParser {
                 method.isStatic(), method.isAbstract(), method.isFinal(),
                 annotations.contains("Override"),
                 false,
-                superCalls
+                superCalls, staticCallClasses, helperCalls,
+                hasConditionals, hasNumericComparisons, hasTryCatch
         );
     }
 

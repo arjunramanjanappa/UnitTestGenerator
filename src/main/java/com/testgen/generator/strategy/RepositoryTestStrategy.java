@@ -42,7 +42,6 @@ public class RepositoryTestStrategy extends AbstractTestStrategy {
         sb.append(i(1)).append("class Unit {\n\n");
 
         sb.append(buildMockDeclarations(m.mockCandidates(), 2));
-        sb.append(i(2)).append("@InjectMocks\n");
         sb.append(i(2)).append("private ").append(cls).append(" subject;\n\n");
         sb.append(buildBeforeEach(m, "subject", false, 2));
         sb.append(buildTestMethods(m, "subject", 2));

@@ -198,6 +198,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
              + "import org.junit.jupiter.params.provider.EnumSource;\n"
              + "import org.mockito.*;\n"
              + "import org.mockito.junit.jupiter.MockitoExtension;\n"
+             + "import static org.mockito.Mockito.mockStatic;\n"
              + "import org.springframework.beans.factory.annotation.Autowired;\n"
              + "import org.springframework.boot.test.context.SpringBootTest;\n"
              + "import org.springframework.context.ApplicationContext;\n"
@@ -409,12 +410,32 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     // ── @BeforeEach ─────────────────────────────────────────────────────────
 
+    /**
+     * Spy-based @BeforeEach (model: spy subject, inject mocks via ReflectionTestUtils).
+     *
+     * Pattern: spy(new ClassName()) so the subject's own methods can be stubbed
+     * to isolate internal helpers / superclass delegation from the logic under test.
+     */
     protected String buildBeforeEach(ClassMetadata m, String subject, boolean usesMockBeans, int indent) {
         StringBuilder sb = new StringBuilder();
         sb.append(i(indent)).append("@BeforeEach\n");
         sb.append(i(indent)).append("void setUp() {\n");
 
-        // @Value fields — must be set via ReflectionTestUtils (BAU classes not modified)
+        if (!usesMockBeans) {
+            // Create subject as spy so internal helpers and super calls can be stubbed
+            sb.append(i(indent + 1)).append(m.className()).append(" rawInstance = new ").append(m.className()).append("();\n");
+            sb.append(i(indent + 1)).append(subject).append(" = spy(rawInstance);\n\n");
+
+            // Inject mocks into spy via ReflectionTestUtils (BAU field injection — never modify source)
+            for (FieldMetadata f : m.mockCandidates()) {
+                if (!f.isApplicationContext()) {
+                    sb.append(i(indent + 1)).append("ReflectionTestUtils.setField(").append(subject)
+                      .append(", \"").append(f.name()).append("\", ").append(f.name()).append(");\n");
+                }
+            }
+        }
+
+        // @Value fields
         for (FieldMetadata f : m.valueFields()) {
             sb.append(i(indent + 1)).append("ReflectionTestUtils.setField(").append(subject)
               .append(", \"").append(f.name()).append("\", \"testValue\");\n");
@@ -424,11 +445,17 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             sb.append(buildAppCtxStubs(m, indent + 1));
         }
 
-        // Repository field stubs — JPA interfaces return null by default; pre-stub common operations
+        // Repository stubs
         sb.append(buildRepositoryStubs(m, indent + 1));
 
-        if (!usesMockBeans && m.hasSuperClass()) {
-            sb.append(buildSuperClassStubs(m, indent + 1));
+        if (!usesMockBeans) {
+            // Stub internal helper methods on the spy (Pattern D)
+            sb.append(buildHelperMethodStubs(m, subject, indent + 1));
+
+            // Stub super calls on spy (Pattern B)
+            if (m.hasSuperClass()) {
+                sb.append(buildSuperClassStubs(m, indent + 1));
+            }
         }
 
         boolean hasPostConstruct = m.methods().stream()
@@ -439,6 +466,45 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         }
 
         sb.append(i(indent)).append("}\n\n");
+        return sb.toString();
+    }
+
+    // ── Pattern D: internal helper method stubs ──────────────────────────────
+
+    /**
+     * Stubs internal helper methods (populate/build/create/map/assemble prefix) on the spy
+     * to prevent complex internal logic from executing during unit tests.
+     */
+    protected String buildHelperMethodStubs(ClassMetadata m, String subject, int indent) {
+        // Collect unique helper names referenced in any testable method body
+        Set<String> helperNames = m.methods().stream()
+                .filter(MethodMetadata::isTestable)
+                .flatMap(mm -> mm.helperMethodCalls().stream())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (helperNames.isEmpty()) return "";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(i(indent)).append("// Pattern D: stub internal helpers on spy (prevents complex logic execution)\n");
+        for (String helperName : helperNames) {
+            m.methods().stream()
+              .filter(mm -> mm.name().equals(helperName))
+              .findFirst()
+              .ifPresent(mm -> {
+                  String matchers = mm.parameters().stream()
+                          .map(p -> "any(" + p.type().replaceAll("<.*>", "").trim() + ".class)")
+                          .collect(Collectors.joining(", "));
+                  if (mm.hasReturnValue()) {
+                      sb.append(i(indent))
+                        .append("lenient().doReturn(").append(defaultValue(mm.returnType()))
+                        .append(").when(").append(subject).append(").").append(helperName)
+                        .append("(").append(matchers).append(");\n");
+                  } else {
+                      sb.append(i(indent))
+                        .append("lenient().doNothing().when(").append(subject).append(").").append(helperName)
+                        .append("(").append(matchers).append(");\n");
+                  }
+              });
+        }
         return sb.toString();
     }
 
@@ -492,6 +558,131 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent + 2)).append("assertNotNull(subject);\n");
         sb.append(i(indent + 2)).append("// TODO: verify full Spring context integration\n");
         sb.append(i(indent + 1)).append("}\n");
+        sb.append(i(indent)).append("}\n\n");
+        return sb.toString();
+    }
+
+    // ── Pattern C: branch tests (conditional logic) ─────────────────────────
+
+    protected String buildBranchTests(MethodMetadata mm, String subject,
+                                       ClassMetadata m, int indent) {
+        if (!mm.hasConditionals()) return "";
+        StringBuilder sb = new StringBuilder();
+        String throwsDecl = checkedThrowsClause(mm);
+
+        // TRUE branch
+        String trueName = convention.unitTestMethod(mm.name(), "when_condition_isTrue",
+                buildParamSuffix(mm));
+        sb.append(i(indent)).append("@Test\n");
+        sb.append(i(indent)).append("void ").append(trueName).append("()").append(throwsDecl).append(" {\n");
+        sb.append(i(indent + 1)).append("// Pattern C — TRUE branch: configure subject/mocks for the positive condition\n");
+        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
+        sb.append(i(indent + 1)).append("// TODO: doReturn(true).when(subject).isConditionFlag();  OR set field via ReflectionTestUtils\n");
+        if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
+        sb.append(i(indent + 1)).append("// TODO: assert true-branch outcome\n");
+        sb.append(i(indent)).append("}\n\n");
+
+        // FALSE branch
+        String falseName = convention.unitTestMethod(mm.name(), "when_condition_isFalse",
+                buildParamSuffix(mm));
+        sb.append(i(indent)).append("@Test\n");
+        sb.append(i(indent)).append("void ").append(falseName).append("()").append(throwsDecl).append(" {\n");
+        sb.append(i(indent + 1)).append("// Pattern C — FALSE branch: configure subject/mocks for the negative condition\n");
+        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
+        sb.append(i(indent + 1)).append("// TODO: doReturn(false).when(subject).isConditionFlag();  OR set field via ReflectionTestUtils\n");
+        if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
+        sb.append(i(indent + 1)).append("// TODO: assert false-branch outcome\n");
+        sb.append(i(indent)).append("}\n\n");
+
+        return sb.toString();
+    }
+
+    // ── Pattern G: boundary tests (numeric/comparison) ──────────────────────
+
+    protected String buildBoundaryTests(MethodMetadata mm, String subject,
+                                         ClassMetadata m, int indent) {
+        if (!mm.hasNumericComparisons()) return "";
+        StringBuilder sb = new StringBuilder();
+        String throwsDecl = checkedThrowsClause(mm);
+
+        for (String label : List.of("belowThreshold", "atThreshold", "aboveThreshold")) {
+            String testName = convention.unitTestMethod(mm.name(), label, buildParamSuffix(mm));
+            sb.append(i(indent)).append("@Test\n");
+            sb.append(i(indent)).append("void ").append(testName).append("()").append(throwsDecl).append(" {\n");
+            sb.append(i(indent + 1)).append("// Pattern G — boundary: '").append(label).append("'\n");
+            buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
+            sb.append(i(indent + 1)).append("// TODO: set the numeric field to the boundary value (e.g. threshold-1 / threshold / threshold+1)\n");
+            if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
+            sb.append(i(indent + 1)).append("// TODO: assert outcome for ").append(label).append("\n");
+            sb.append(i(indent)).append("}\n\n");
+        }
+        return sb.toString();
+    }
+
+    // ── Pattern A: static dependency mock tests ─────────────────────────────
+
+    protected String buildStaticMockTests(MethodMetadata mm, String subject,
+                                           ClassMetadata m, int indent) {
+        if (!mm.hasStaticDependencies()) return "";
+        StringBuilder sb = new StringBuilder();
+        String throwsDecl = checkedThrowsClause(mm);
+
+        for (String staticClass : mm.staticCallClasses()) {
+            String testName = convention.unitTestMethod(mm.name(),
+                    "with_" + staticClass + "_mocked", buildParamSuffix(mm));
+            sb.append(i(indent)).append("@Test\n");
+            sb.append(i(indent)).append("void ").append(testName).append("()").append(throwsDecl).append(" {\n");
+            sb.append(i(indent + 1)).append("// Pattern A — static dependency: mock ").append(staticClass).append("\n");
+            sb.append(i(indent + 1)).append("try (MockedStatic<").append(staticClass).append("> mockedStatic = mockStatic(")
+              .append(staticClass).append(".class)) {\n");
+            sb.append(i(indent + 2)).append("// TODO: mockedStatic.when(() -> ").append(staticClass)
+              .append(".someMethod(any())).thenReturn(expectedValue);\n");
+            buildParamSetup(mm, sb, indent + 2, m.concreteClassNames(), m.paramTypeRegistry());
+            if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 2);
+            sb.append(i(indent + 2)).append("// TODO: assert result\n");
+            sb.append(i(indent + 1)).append("}\n");
+            sb.append(i(indent)).append("}\n\n");
+        }
+        return sb.toString();
+    }
+
+    // ── Pattern H: exception flow test ──────────────────────────────────────
+
+    protected String buildExceptionFlowTest(MethodMetadata mm, String subject,
+                                             ClassMetadata m, int indent) {
+        if (!mm.hasTryCatch() && !mm.throwsExceptions()) return "";
+        String exType  = primaryException(mm) != null ? primaryException(mm) : "Exception";
+        String testName = convention.unitTestMethod(mm.name(), "whenExceptionOccurs", buildParamSuffix(mm));
+        StringBuilder sb = new StringBuilder();
+
+        sb.append(i(indent)).append("@Test\n");
+        sb.append(i(indent)).append("void ").append(testName).append("() {\n");
+        sb.append(i(indent + 1)).append("// Pattern H — exception flow: assert the FINAL thrown exception\n");
+        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
+
+        // Identify the first non-repository mock to throw from
+        String triggerMock = m.mockCandidates().stream()
+                .filter(f -> !f.simpleType().endsWith("Repository") && !f.isApplicationContext())
+                .map(FieldMetadata::name)
+                .findFirst()
+                .orElse("<mockDep>");
+        sb.append(i(indent + 1))
+          .append("doThrow(new ").append(exType).append("(\"test\"))")
+          .append(".when(").append(triggerMock).append(").").append(mm.name()).append("(")
+          .append(mm.parameters().stream().map(p -> "any(" + p.type().replaceAll("<.*>", "").trim() + ".class)")
+                  .collect(Collectors.joining(", ")))
+          .append("); // TODO: identify correct trigger\n");
+
+        sb.append(i(indent + 1)).append("// Assert the final exception (may be wrapped by try/catch re-throw)\n");
+        if (mm.isProtected()) {
+            sb.append(i(indent + 1)).append("assertThrows(").append(exType).append(".class, () ->\n");
+            sb.append(i(indent + 2)).append("ReflectionTestUtils.invokeMethod(subject, \"")
+              .append(mm.name()).append("\"")
+              .append(mm.parameters().isEmpty() ? "" : ", " + paramNames(mm)).append("));\n");
+        } else {
+            sb.append(i(indent + 1)).append("assertThrows(").append(exType).append(".class, () ->\n");
+            sb.append(i(indent + 2)).append("subject.").append(mm.name()).append("(").append(paramNames(mm)).append("));\n");
+        }
         sb.append(i(indent)).append("}\n\n");
         return sb.toString();
     }
@@ -707,11 +898,24 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         }
         sb.append(i(indent)).append("}\n\n");
 
-        // One exception test per method — pick the most specific declared exception
-        // (skip base Exception/Throwable if a more specific one is declared alongside it)
+        // One exception test per method (most specific declared exception)
         String primaryException = primaryException(mm);
         if (primaryException != null) {
             sb.append(buildExceptionTestMethod(mm, subject, primaryException, indent, m));
+        }
+
+        // Pattern C: branch tests for conditional logic
+        sb.append(buildBranchTests(mm, subject, m, indent));
+
+        // Pattern G: numeric boundary tests
+        sb.append(buildBoundaryTests(mm, subject, m, indent));
+
+        // Pattern A: static dependency mock tests
+        sb.append(buildStaticMockTests(mm, subject, m, indent));
+
+        // Pattern H: exception flow test (try/catch)
+        if (mm.hasTryCatch()) {
+            sb.append(buildExceptionFlowTest(mm, subject, m, indent));
         }
 
         // @ParameterizedTest for primitive / String params

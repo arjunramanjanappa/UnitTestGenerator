@@ -41,9 +41,8 @@ public class ServiceTestStrategy extends AbstractTestStrategy {
         sb.append(i(1)).append("class Unit {\n\n");
 
         sb.append(buildMockDeclarations(m, 2));
-        sb.append(buildParentSpyDeclarations(m, 2));
 
-        sb.append(i(2)).append("@InjectMocks\n");
+        // Spy subject — not @InjectMocks; injected via ReflectionTestUtils in @BeforeEach
         sb.append(i(2)).append("private ").append(cls).append(" subject;\n\n");
 
         sb.append(buildBeforeEach(m, "subject", false, 2));
