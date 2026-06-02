@@ -41,11 +41,8 @@ public class DefaultTestStrategy extends AbstractTestStrategy {
             sb.append(i(3)).append("subject = mock(").append(cls).append(".class, CALLS_REAL_METHODS);\n");
             sb.append(i(2)).append("}\n\n");
         } else {
-            sb.append(buildMockDeclarations(m.mockCandidates(), 2));
-            if (m.hasSuperClass()) {
-                sb.append(i(2)).append("@Spy\n");
-                sb.append(i(2)).append("private ").append(m.superClassName()).append(" parent;\n\n");
-            }
+            sb.append(buildMockDeclarations(m, 2));
+            sb.append(buildParentSpyDeclarations(m, 2));
             sb.append(i(2)).append("@InjectMocks\n");
             sb.append(i(2)).append("private ").append(cls).append(" subject;\n\n");
             sb.append(buildBeforeEach(m, "subject", false, 2));

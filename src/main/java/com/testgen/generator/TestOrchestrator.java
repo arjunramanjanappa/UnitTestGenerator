@@ -8,6 +8,7 @@ import com.testgen.generator.builder.DataBuilderGenerator;
 import com.testgen.generator.strategy.*;
 import com.testgen.parser.ClassMetadata;
 import com.testgen.parser.JavaClassParser;
+import com.testgen.parser.MethodMetadata;
 import com.testgen.report.GenerationReport;
 import com.testgen.scanner.FileScanner;
 import com.testgen.writer.TestFileWriter;
@@ -22,6 +23,7 @@ import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
 
 /**
  * Orchestrates the full scan → parse → classify → generate → write pipeline.
@@ -48,7 +50,7 @@ public class TestOrchestrator {
      * @param excludePatterns  package / class name substrings to exclude
      * @param convention       test method naming convention
      * @param dryRun           if true, compute everything but do not write files
-     * @param inheritanceDepth max levels of parent chain to stub (0 = direct parent only)
+     * @param inheritanceDepth max levels of parent chain to stub (0 = none, 1 = direct parent only)
      * @param progressCallback called with (currentFile, totalFiles) as each file is processed
      */
     public GenerationReport generate(
@@ -67,21 +69,27 @@ public class TestOrchestrator {
                 .sourcePath(sourceRoot.toString())
                 .targetPath(targetRoot.toString());
 
-        // Detect Spring Boot version from target project pom.xml
         String springBootVersion = detectSpringBootVersion(sourceRoot);
 
-        // Parse all XML Camel routes from src/main/resources
         Path resourcesRoot = sourceRoot.getParent().resolve("resources");
         List<CamelRouteMetadata> xmlRoutes = xmlRouteParser.parseXmlRoutes(resourcesRoot);
 
-        // Scan Java files
         List<Path> javaFiles = fileScanner.scanJavaFiles(sourceRoot, includePatterns, excludePatterns);
         int total = javaFiles.size();
         report.totalScanned(total);
 
+        // ── Pre-pass: build className → Path index for parent + interface resolution ──
+        Map<String, Path> fileIndex = buildFileIndex(sourceRoot);
+
+        // ── Pre-pass: determine concrete (non-interface, non-abstract) class names ──
+        Set<String> concreteClassNames = resolveConcreteClassNames(fileIndex);
+
+        // ── Pre-pass: build interface simple-name → Path index ──
+        Map<String, Path> interfaceIndex = buildInterfaceIndex(sourceRoot);
+
         int generated = 0, skipped = 0, failed = 0;
-        List<String> generatedFiles = new ArrayList<>();
-        List<String> skippedFiles   = new ArrayList<>();
+        List<String> generatedFiles  = new ArrayList<>();
+        List<String> skippedFiles    = new ArrayList<>();
         Map<String, String> failedFiles = new LinkedHashMap<>();
 
         for (int idx = 0; idx < total; idx++) {
@@ -99,17 +107,26 @@ public class TestOrchestrator {
                 ClassMetadata meta = classifier.classify(parsed.get())
                         .withSpringBootVersion(springBootVersion);
 
-                TestStrategy strategy = pickStrategy(meta, xmlRoutes);
-                List<GeneratedTest> tests = strategy.generate(meta, convention);
+                // Feature 1: resolve parent chain up to inheritanceDepth levels
+                List<ClassMetadata> parentChain =
+                        resolveParentChain(meta, fileIndex, inheritanceDepth);
+                meta = meta.withParentChain(parentChain);
 
-                // Also generate TestData
-                tests = new ArrayList<>(tests);
+                // Feature 2: resolve interface default methods
+                List<MethodMetadata> ifaceDefaults =
+                        resolveInterfaceDefaultMethods(meta, interfaceIndex);
+                meta = meta.withInterfaceDefaultMethods(ifaceDefaults);
+
+                // Feature 4: attach concrete class name set for @Spy vs @Mock decisions
+                meta = meta.withConcreteClassNames(concreteClassNames);
+
+                TestStrategy strategy = pickStrategy(meta, xmlRoutes);
+                List<GeneratedTest> tests = new ArrayList<>(strategy.generate(meta, convention));
                 tests.add(dataBuilderGenerator.generate(meta));
 
                 for (GeneratedTest test : tests) {
                     if (dryRun) {
-                        Path preview = fileWriter.resolveTargetPath(test, targetRoot);
-                        generatedFiles.add("[DRY-RUN] " + preview);
+                        generatedFiles.add("[DRY-RUN] " + fileWriter.resolveTargetPath(test, targetRoot));
                         generated++;
                     } else {
                         boolean written = fileWriter.write(test, targetRoot, overwrite);
@@ -147,6 +164,103 @@ public class TestOrchestrator {
                 false, 1, null);
     }
 
+    // ── File index helpers ──────────────────────────────────────────────────
+
+    /**
+     * Walks sourceRoot and builds simpleName → Path for all .java files.
+     * Includes both classes and interfaces.
+     */
+    private Map<String, Path> buildFileIndex(Path sourceRoot) {
+        Map<String, Path> index = new HashMap<>();
+        try {
+            Files.walk(sourceRoot)
+                    .filter(p -> p.toString().endsWith(".java"))
+                    .forEach(p -> {
+                        String fileName = p.getFileName().toString().replace(".java", "");
+                        index.put(fileName, p);
+                    });
+        } catch (Exception e) {
+            log.warn("Could not build file index from {}: {}", sourceRoot, e.getMessage());
+        }
+        return index;
+    }
+
+    /**
+     * Returns the subset of fileIndex entries that are interfaces.
+     */
+    private Map<String, Path> buildInterfaceIndex(Path sourceRoot) {
+        Map<String, Path> index = new HashMap<>();
+        try {
+            Files.walk(sourceRoot)
+                    .filter(p -> p.toString().endsWith(".java"))
+                    .forEach(p -> {
+                        try {
+                            com.github.javaparser.ast.CompilationUnit cu =
+                                    com.github.javaparser.StaticJavaParser.parse(p);
+                            cu.findFirst(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.class)
+                                    .filter(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration::isInterface)
+                                    .ifPresent(iface -> index.put(iface.getNameAsString(), p));
+                        } catch (Exception ignored) {}
+                    });
+        } catch (Exception e) {
+            log.warn("Could not build interface index from {}: {}", sourceRoot, e.getMessage());
+        }
+        return index;
+    }
+
+    /**
+     * Returns the set of simple class names that are concrete (not interface, not abstract).
+     * Used to decide @Mock vs @Spy for injected fields.
+     */
+    private Set<String> resolveConcreteClassNames(Map<String, Path> fileIndex) {
+        Set<String> concrete = new HashSet<>();
+        for (Map.Entry<String, Path> entry : fileIndex.entrySet()) {
+            try {
+                com.github.javaparser.ast.CompilationUnit cu =
+                        com.github.javaparser.StaticJavaParser.parse(entry.getValue());
+                cu.findFirst(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.class)
+                        .filter(c -> !c.isInterface() && !c.isAbstract())
+                        .ifPresent(c -> concrete.add(c.getNameAsString()));
+            } catch (Exception ignored) {}
+        }
+        return Collections.unmodifiableSet(concrete);
+    }
+
+    // ── Parent chain resolution (Feature 1) ────────────────────────────────
+
+    private List<ClassMetadata> resolveParentChain(ClassMetadata m,
+                                                    Map<String, Path> fileIndex,
+                                                    int depth) {
+        List<ClassMetadata> chain = new ArrayList<>();
+        ClassMetadata current = m;
+        for (int level = 0; level < depth; level++) {
+            if (!current.hasSuperClass()) break;
+            Path parentFile = fileIndex.get(current.superClassName());
+            if (parentFile == null) break;
+
+            Optional<ClassMetadata> parsed = classParser.parse(parentFile);
+            if (parsed.isEmpty()) break;
+
+            ClassMetadata parent = classifier.classify(parsed.get());
+            chain.add(parent);
+            current = parent;
+        }
+        return chain;
+    }
+
+    // ── Interface default method resolution (Feature 2) ────────────────────
+
+    private List<MethodMetadata> resolveInterfaceDefaultMethods(ClassMetadata m,
+                                                                  Map<String, Path> ifaceIndex) {
+        if (m.interfaces().isEmpty()) return List.of();
+        return m.interfaces().stream()
+                .filter(ifaceIndex::containsKey)
+                .flatMap(iface -> classParser.parseInterfaceDefaultMethods(ifaceIndex.get(iface)).stream())
+                .collect(Collectors.toList());
+    }
+
+    // ── Strategy selection ──────────────────────────────────────────────────
+
     private TestStrategy pickStrategy(ClassMetadata m, List<CamelRouteMetadata> xmlRoutes) {
         return switch (m.classType()) {
             case SERVICE                          -> new ServiceTestStrategy();
@@ -158,8 +272,9 @@ public class TestOrchestrator {
         };
     }
 
+    // ── Spring Boot version detection ───────────────────────────────────────
+
     private String detectSpringBootVersion(Path sourceRoot) {
-        // Walk up from src/main/java to find pom.xml
         Path current = sourceRoot;
         for (int i = 0; i < 5; i++) {
             current = current.getParent();
@@ -169,8 +284,6 @@ public class TestOrchestrator {
                 try (InputStream is = Files.newInputStream(pom)) {
                     Document doc = DocumentBuilderFactory.newInstance()
                             .newDocumentBuilder().parse(is);
-                    NodeList versions = doc.getElementsByTagName("version");
-                    // Look for spring-boot-starter-parent version
                     NodeList parents = doc.getElementsByTagName("parent");
                     if (parents.getLength() > 0) {
                         Element parent = (Element) parents.item(0);

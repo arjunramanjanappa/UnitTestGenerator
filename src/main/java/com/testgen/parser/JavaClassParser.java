@@ -5,9 +5,7 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.ImportDeclaration;
 import com.github.javaparser.ast.PackageDeclaration;
 import com.github.javaparser.ast.body.*;
-import com.github.javaparser.ast.expr.AnnotationExpr;
-import com.github.javaparser.ast.expr.MethodCallExpr;
-import com.github.javaparser.ast.expr.SuperExpr;
+import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.nodeTypes.NodeWithAnnotations;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.ReferenceType;
@@ -19,6 +17,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -29,6 +28,15 @@ public class JavaClassParser {
     private static final Set<String> APP_CTX_TYPES =
             Set.of("ApplicationContext", "ConfigurableApplicationContext",
                     "GenericApplicationContext", "WebApplicationContext");
+    private static final Set<String> CONSTRAINT_ANNOTATIONS =
+            Set.of("NotNull", "NotBlank", "NotEmpty", "Null",
+                   "Min", "Max", "Size", "DecimalMin", "DecimalMax",
+                   "Positive", "PositiveOrZero", "Negative", "NegativeOrZero",
+                   "Email", "Pattern", "AssertTrue", "AssertFalse",
+                   "Past", "PastOrPresent", "Future", "FutureOrPresent",
+                   "Digits", "Valid", "NotZero");
+
+    // ── Public API ──────────────────────────────────────────────────────────
 
     public Optional<ClassMetadata> parse(Path filePath) {
         try {
@@ -50,13 +58,12 @@ public class JavaClassParser {
             }
 
             ClassOrInterfaceDeclaration cls = classDecl.get();
-            String className = cls.getNameAsString();
+            String className  = cls.getNameAsString();
             List<String> annotations = extractAnnotationNames(cls);
 
             String superClass = cls.getExtendedTypes().isEmpty() ? null
                     : cls.getExtendedTypes().get(0).getNameAsString();
 
-            // Extract generic type params from parent e.g. BaseService<Order, Long>
             List<String> genericTypeParams = new ArrayList<>();
             if (!cls.getExtendedTypes().isEmpty()) {
                 cls.getExtendedTypes().get(0).getTypeArguments()
@@ -67,21 +74,25 @@ public class JavaClassParser {
                     .map(ClassOrInterfaceType::getNameAsString)
                     .toList();
 
-            boolean hasLombok = imports.stream().anyMatch(i -> i.startsWith("lombok."));
+            boolean hasLombok  = imports.stream().anyMatch(i -> i.startsWith("lombok."));
             boolean hasBuilder = annotations.contains("Builder")
                     || annotations.contains("Data")
                     || annotations.contains("SuperBuilder");
 
-            List<FieldMetadata> fields = parseFields(cls);
+            // Detect constructor-injected field types (public constructors only)
+            Set<String> ctorInjectedTypes = detectConstructorInjectedTypes(cls);
+
+            List<FieldMetadata>  fields  = parseFields(cls, ctorInjectedTypes);
             List<MethodMetadata> methods = parseMethods(cls);
 
             return Optional.of(new ClassMetadata(
                     className, packageName, filePath.toString(),
-                    ClassType.POJO, // Classifier will override
+                    ClassType.POJO,   // Classifier will override
                     annotations, fields, methods, imports,
                     superClass, interfaces,
-                    cls.isAbstract(), cls.isInterface(),
-                    hasLombok, hasBuilder, genericTypeParams, null
+                    cls.isAbstract(), false,
+                    hasLombok, hasBuilder, genericTypeParams, null,
+                    List.of(), List.of(), Set.of()   // parentChain / interfaceDefaults / concreteNames resolved later
             ));
 
         } catch (IOException e) {
@@ -93,70 +104,130 @@ public class JavaClassParser {
         }
     }
 
-    private List<FieldMetadata> parseFields(ClassOrInterfaceDeclaration cls) {
+    /**
+     * Parses an interface file and returns its default methods as MethodMetadata.
+     * Returns empty list on any error.
+     */
+    public List<MethodMetadata> parseInterfaceDefaultMethods(Path interfaceFile) {
+        try {
+            CompilationUnit cu = StaticJavaParser.parse(interfaceFile);
+            Optional<ClassOrInterfaceDeclaration> decl =
+                    cu.findFirst(ClassOrInterfaceDeclaration.class);
+            if (decl.isEmpty() || !decl.get().isInterface()) return List.of();
+
+            return decl.get().getMethods().stream()
+                    .filter(MethodDeclaration::isDefault)
+                    .map(this::toMethodMetadata)
+                    .toList();
+
+        } catch (Exception e) {
+            log.warn("Could not parse interface {}: {}", interfaceFile, e.getMessage());
+            return List.of();
+        }
+    }
+
+    // ── Private helpers ─────────────────────────────────────────────────────
+
+    private Set<String> detectConstructorInjectedTypes(ClassOrInterfaceDeclaration cls) {
+        Set<String> types = new HashSet<>();
+        cls.getConstructors().stream()
+                .filter(ConstructorDeclaration::isPublic)
+                .forEach(ctor -> ctor.getParameters()
+                        .forEach(p -> types.add(p.getTypeAsString().replaceAll("<.*>", "").trim())));
+        return types;
+    }
+
+    private List<FieldMetadata> parseFields(ClassOrInterfaceDeclaration cls,
+                                            Set<String> ctorInjectedTypes) {
         List<FieldMetadata> result = new ArrayList<>();
 
         for (FieldDeclaration field : cls.getFields()) {
             List<String> annotations = extractAnnotationNames(field);
 
             boolean isInjected = annotations.stream().anyMatch(INJECT_ANNOTATIONS::contains)
-                    || (field.isFinal() && !field.isStatic()); // final non-static = constructor injection
+                    || (field.isFinal() && !field.isStatic());
 
-            boolean isValue = annotations.contains("Value");
-            String valueKey = "";
+            boolean isValue  = annotations.contains("Value");
+            String  valueKey = "";
             if (isValue) {
                 valueKey = field.getAnnotationByName("Value")
                         .map(Object::toString)
                         .orElse("");
             }
 
+            // Extract validation constraints
+            Map<String, String> constraints = extractConstraints(field);
+
             for (VariableDeclarator var : field.getVariables()) {
-                String type = var.getTypeAsString();
+                String type       = var.getTypeAsString();
                 String simpleType = type.contains("<") ? type.substring(0, type.indexOf('<')) : type;
-                boolean isAppCtx = APP_CTX_TYPES.contains(simpleType);
+                boolean isAppCtx  = APP_CTX_TYPES.contains(simpleType);
+                boolean isCtorInj = ctorInjectedTypes.contains(simpleType) && !isInjected;
+
+                // A constructor-injected dep that isn't already marked via @Autowired / final
+                boolean effectivelyInjected = isInjected || isCtorInj;
 
                 result.add(new FieldMetadata(
                         var.getNameAsString(), type, simpleType, annotations,
-                        isInjected, isValue, valueKey, field.isFinal(), isAppCtx
+                        effectivelyInjected, isValue, valueKey, field.isFinal(), isAppCtx,
+                        isCtorInj, constraints
                 ));
             }
         }
         return result;
     }
 
-    private List<MethodMetadata> parseMethods(ClassOrInterfaceDeclaration cls) {
-        List<MethodMetadata> result = new ArrayList<>();
+    private Map<String, String> extractConstraints(FieldDeclaration field) {
+        Map<String, String> constraints = new LinkedHashMap<>();
+        for (AnnotationExpr ann : field.getAnnotations()) {
+            String name = ann.getNameAsString();
+            if (!CONSTRAINT_ANNOTATIONS.contains(name)) continue;
 
-        for (MethodDeclaration method : cls.getMethods()) {
-            List<String> annotations = extractAnnotationNames(method);
-            List<String> thrown = method.getThrownExceptions().stream()
-                    .map(ReferenceType::asString)
-                    .toList();
-            List<MethodMetadata.ParameterMetadata> params = method.getParameters().stream()
-                    .map(p -> new MethodMetadata.ParameterMetadata(
-                            p.getTypeAsString(), p.getNameAsString()))
-                    .toList();
-
-            List<String> superCalls = method.findAll(MethodCallExpr.class).stream()
-                    .filter(call -> call.getScope()
-                            .filter(s -> s instanceof SuperExpr)
-                            .isPresent())
-                    .map(MethodCallExpr::getNameAsString)
-                    .distinct()
-                    .toList();
-
-            result.add(new MethodMetadata(
-                    method.getNameAsString(),
-                    method.getTypeAsString(),
-                    params, thrown, annotations,
-                    method.isPublic(), method.isProtected(),
-                    method.isStatic(), method.isAbstract(), method.isFinal(),
-                    annotations.contains("Override"),
-                    false,
-                    superCalls
-            ));
+            if (ann instanceof SingleMemberAnnotationExpr single) {
+                constraints.put(name, single.getMemberValue().toString().replace("\"", ""));
+            } else if (ann instanceof NormalAnnotationExpr normal) {
+                String pairs = normal.getPairs().stream()
+                        .map(p -> p.getNameAsString() + "=" + p.getValue().toString().replace("\"", ""))
+                        .collect(Collectors.joining(","));
+                constraints.put(name, pairs);
+            } else {
+                constraints.put(name, "");
+            }
         }
-        return result;
+        return constraints.isEmpty() ? Map.of() : constraints;
+    }
+
+    private List<MethodMetadata> parseMethods(ClassOrInterfaceDeclaration cls) {
+        return cls.getMethods().stream()
+                .map(this::toMethodMetadata)
+                .toList();
+    }
+
+    private MethodMetadata toMethodMetadata(MethodDeclaration method) {
+        List<String> annotations = extractAnnotationNames(method);
+        List<String> thrown      = method.getThrownExceptions().stream()
+                .map(ReferenceType::asString)
+                .toList();
+        List<MethodMetadata.ParameterMetadata> params = method.getParameters().stream()
+                .map(p -> new MethodMetadata.ParameterMetadata(p.getTypeAsString(), p.getNameAsString()))
+                .toList();
+
+        List<String> superCalls = method.findAll(MethodCallExpr.class).stream()
+                .filter(call -> call.getScope().filter(s -> s instanceof SuperExpr).isPresent())
+                .map(MethodCallExpr::getNameAsString)
+                .distinct()
+                .toList();
+
+        return new MethodMetadata(
+                method.getNameAsString(),
+                method.getTypeAsString(),
+                params, thrown, annotations,
+                method.isPublic(), method.isProtected(),
+                method.isStatic(), method.isAbstract(), method.isFinal(),
+                annotations.contains("Override"),
+                false,
+                superCalls
+        );
     }
 
     private List<String> extractAnnotationNames(NodeWithAnnotations<?> node) {

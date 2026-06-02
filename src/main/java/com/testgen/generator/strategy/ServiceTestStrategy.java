@@ -39,12 +39,8 @@ public class ServiceTestStrategy extends AbstractTestStrategy {
         sb.append(i(1)).append("@ExtendWith(MockitoExtension.class)\n");
         sb.append(i(1)).append("class Unit {\n\n");
 
-        sb.append(buildMockDeclarations(m.mockCandidates(), 2));
-
-        if (m.hasSuperClass()) {
-            sb.append(i(2)).append("@Spy\n");
-            sb.append(i(2)).append("private ").append(m.superClassName()).append(" parent;\n\n");
-        }
+        sb.append(buildMockDeclarations(m, 2));
+        sb.append(buildParentSpyDeclarations(m, 2));
 
         sb.append(i(2)).append("@InjectMocks\n");
         sb.append(i(2)).append("private ").append(cls).append(" subject;\n\n");

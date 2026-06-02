@@ -138,17 +138,37 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 """;
     }
 
-    // ── Mock / MockBean declarations ────────────────────────────────────────
+    // ── Mock / MockBean declarations (Feature 4: @Spy for concrete types) ────
+
+    /**
+     * Emits @Mock or @Spy for each injected field based on whether the field type
+     * is a concrete class found in the scanned source root.
+     * – Interface / unknown type → @Mock  (safe, works everywhere)
+     * – Concrete class found in source → @Spy  (calls real methods unless stubbed)
+     */
+    protected String buildMockDeclarations(ClassMetadata m, int indent) {
+        return buildMockDeclarations(m.mockCandidates(), indent, m.concreteClassNames());
+    }
 
     protected String buildMockDeclarations(List<FieldMetadata> fields, int indent) {
+        return buildMockDeclarations(fields, indent, Set.of());
+    }
+
+    private String buildMockDeclarations(List<FieldMetadata> fields, int indent,
+                                          Set<String> concreteTypes) {
         StringBuilder sb = new StringBuilder();
         for (FieldMetadata f : fields) {
             if (f.isApplicationContext()) {
                 sb.append(i(indent)).append("@Mock\n");
                 sb.append(i(indent)).append("ApplicationContext ").append(f.name()).append(";\n\n");
             } else if (f.isMockCandidate()) {
-                sb.append(i(indent)).append("@Mock\n");
-                sb.append(i(indent)).append(f.type()).append(" ").append(f.name()).append(";\n\n");
+                boolean isConcrete = concreteTypes.contains(f.simpleType());
+                String annotation  = isConcrete ? "@Spy" : "@Mock";
+                if (f.isConstructorInjected()) {
+                    sb.append(i(indent)).append("// Constructor-injected — Mockito @InjectMocks wires via constructor\n");
+                }
+                sb.append(i(indent)).append(annotation).append("\n");
+                sb.append(i(indent)).append("private ").append(f.type()).append(" ").append(f.name()).append(";\n\n");
             }
         }
         return sb.toString();
@@ -161,9 +181,42 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 sb.append(i(indent)).append("@MockBean\n");
                 sb.append(i(indent)).append("ApplicationContext ").append(f.name()).append(";\n\n");
             } else if (f.isMockCandidate()) {
+                if (f.isConstructorInjected()) {
+                    sb.append(i(indent)).append("// Constructor-injected — wired via Spring context\n");
+                }
                 sb.append(i(indent)).append("@MockBean\n");
-                sb.append(i(indent)).append(f.type()).append(" ").append(f.name()).append(";\n\n");
+                sb.append(i(indent)).append("private ").append(f.type()).append(" ").append(f.name()).append(";\n\n");
             }
+        }
+        return sb.toString();
+    }
+
+    // ── Multi-level parent spy declarations (Feature 1) ────────────────────
+
+    /**
+     * Emits @Spy declarations for every level of the parent chain.
+     * Deepest ancestor is declared first so Mockito can resolve injection order.
+     * Example for ClassA → ClassB → ClassC:
+     *   @Spy ClassC grandParent;   // level 2
+     *   @Spy ClassB parent;        // level 1
+     */
+    protected String buildParentSpyDeclarations(ClassMetadata m, int indent) {
+        if (!m.hasParentChain()) {
+            // Fall back to single-level if parentChain not resolved but superClassName known
+            if (!m.hasSuperClass()) return "";
+            StringBuilder sb = new StringBuilder();
+            sb.append(i(indent)).append("@Spy\n");
+            sb.append(i(indent)).append("private ").append(m.superClassName()).append(" parent;\n\n");
+            return sb.toString();
+        }
+        StringBuilder sb = new StringBuilder();
+        List<ClassMetadata> chain = m.parentChain();
+        // Emit deepest first
+        for (int level = chain.size() - 1; level >= 0; level--) {
+            ClassMetadata parent = chain.get(level);
+            String varName = level == 0 ? "parent" : "ancestor" + level;
+            sb.append(i(indent)).append("@Spy\n");
+            sb.append(i(indent)).append("private ").append(parent.className()).append(" ").append(varName).append(";\n\n");
         }
         return sb.toString();
     }
@@ -184,17 +237,15 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     // ── Parent-class (BAU inheritance) stubs ────────────────────────────────
 
     /**
-     * Stubs overridden parent methods using Mockito spy + doReturn.
-     * Only the overridden subset is stubbed; non-overridden inherited methods
-     * are intentionally skipped — they are covered by the parent's own test.
-     *
-     * For overridden methods that contain super.xxx() calls, an additional stub
-     * is emitted on `parent` so the spy intercepts the delegation instead of
-     * executing the real ClassB implementation.
+     * Stubs overridden parent methods using Mockito spy + doReturn for the direct parent.
+     * Also handles super.xxx() calls within the method body.
+     * For multi-level chains, ancestor stubs are appended after the direct parent stubs.
      */
     protected String buildSuperClassStubs(ClassMetadata m, int indent) {
         if (!m.hasSuperClass()) return "";
         StringBuilder sb = new StringBuilder();
+
+        // ── Direct parent stubs ──────────────────────────────────────────────
         sb.append(i(indent)).append("// Parent ").append(m.superClassName())
           .append(" — non-overridden inherited methods covered by ").append(m.superClassName()).append("Test\n");
 
@@ -203,39 +254,63 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                     .map(p -> "any(" + p.type() + ".class)")
                     .collect(Collectors.joining(", "));
 
-            // Stub on subject (ClassA) to control what the overriding method returns
             if (mm.hasReturnValue()) {
                 sb.append(i(indent))
                   .append("// doReturn(").append(defaultValue(mm.returnType()))
                   .append(").when(subject).").append(mm.name()).append("(").append(matcherParams)
-                  .append("); // stub overridden method on ClassA\n");
+                  .append("); // stub overridden method on ").append(m.className()).append("\n");
             } else {
                 sb.append(i(indent))
                   .append("// doNothing().when(subject).").append(mm.name()).append("(").append(matcherParams)
-                  .append("); // stub void overridden method on ClassA\n");
+                  .append("); // stub void overridden method on ").append(m.className()).append("\n");
             }
 
-            // If the method body calls super.xxx(), also stub the parent spy so the
-            // real ClassB implementation is never invoked during the test
+            // super.xxx() calls — stub on parent spy to prevent real parent execution
             if (mm.hasSuperCalls()) {
                 for (String superCall : mm.superMethodCalls()) {
                     if (mm.name().equals(superCall)) {
-                        // super.sameMethod() — stub on parent directly
                         if (mm.hasReturnValue()) {
                             sb.append(i(indent))
                               .append("doReturn(").append(defaultValue(mm.returnType()))
                               .append(").when(parent).").append(superCall).append("(").append(matcherParams)
-                              .append("); // intercept super.").append(superCall).append("() — prevents real ").append(m.superClassName()).append(" execution\n");
+                              .append("); // intercept super.").append(superCall)
+                              .append("() — prevents real ").append(m.superClassName()).append(" execution\n");
                         } else {
                             sb.append(i(indent))
                               .append("doNothing().when(parent).").append(superCall).append("(").append(matcherParams)
-                              .append("); // intercept super.").append(superCall).append("() — prevents real ").append(m.superClassName()).append(" execution\n");
+                              .append("); // intercept super.").append(superCall)
+                              .append("() — prevents real ").append(m.superClassName()).append(" execution\n");
                         }
                     } else {
-                        // super.differentMethod() — stub on parent, return type unknown so use lenient stub
                         sb.append(i(indent))
-                          .append("// TODO: stub super.").append(superCall).append("() on parent — ")
-                          .append("determine return type and add: doReturn(...).when(parent).").append(superCall).append("(...);\n");
+                          .append("// TODO: stub super.").append(superCall)
+                          .append("() on parent — doReturn(...).when(parent).").append(superCall).append("(...);\n");
+                    }
+                }
+            }
+        }
+
+        // ── Multi-level ancestor stubs (Feature 1) ───────────────────────────
+        if (m.hasParentChain() && m.parentChain().size() > 1) {
+            for (int level = 1; level < m.parentChain().size(); level++) {
+                ClassMetadata ancestor = m.parentChain().get(level);
+                String varName = "ancestor" + level;
+                sb.append("\n").append(i(indent))
+                  .append("// Ancestor level ").append(level + 1).append(": ").append(ancestor.className())
+                  .append(" — stub methods overridden by ").append(m.parentChain().get(level - 1).className()).append("\n");
+                for (MethodMetadata mm : ancestor.overriddenMethods()) {
+                    String matcherParams = mm.parameters().stream()
+                            .map(p -> "any(" + p.type() + ".class)")
+                            .collect(Collectors.joining(", "));
+                    if (mm.hasReturnValue()) {
+                        sb.append(i(indent))
+                          .append("// doReturn(").append(defaultValue(mm.returnType()))
+                          .append(").when(").append(varName).append(").").append(mm.name())
+                          .append("(").append(matcherParams).append(");\n");
+                    } else {
+                        sb.append(i(indent))
+                          .append("// doNothing().when(").append(varName).append(").").append(mm.name())
+                          .append("(").append(matcherParams).append(");\n");
                     }
                 }
             }
@@ -435,6 +510,17 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             sb.append(i(indent)).append("// Inherited non-overridden methods → covered by ")
               .append(m.superClassName()).append("Test\n\n");
         }
+
+        // Feature 2: interface default method tests
+        if (m.hasInterfaceDefaultMethods()) {
+            sb.append(i(indent)).append("// --- Interface default methods ---\n\n");
+            for (MethodMetadata mm : m.interfaceDefaultMethods()) {
+                sb.append(i(indent))
+                  .append("// Default method from interface — exercised via subject (no override needed)\n");
+                sb.append(buildSingleTestMethod(mm, subject, m, indent));
+            }
+        }
+
         return sb.toString();
     }
 
