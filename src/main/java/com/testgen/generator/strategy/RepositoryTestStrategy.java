@@ -72,7 +72,8 @@ public class RepositoryTestStrategy extends AbstractTestStrategy {
             if (!mm.isProtected()) {
                 sb.append(i(2)).append("@Test\n");
                 sb.append(i(2)).append("void ")
-                  .append(convention.unitTestMethod(mm.name(), "jpa")).append("() {\n");
+                  .append(convention.unitTestMethod(mm.name(), "jpa"))
+                  .append("()").append(checkedThrowsClause(mm)).append(" {\n");
                 sb.append(i(3)).append("// TODO: persist test data via entityManager then invoke subject\n");
                 sb.append(i(2)).append("}\n\n");
             }

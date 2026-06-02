@@ -76,7 +76,8 @@ public class ServiceTestStrategy extends AbstractTestStrategy {
             if (!mm.isProtected()) {
                 sb.append(i(2)).append("@Test\n");
                 sb.append(i(2)).append("void ")
-                  .append(convention.unitTestMethod(mm.name(), "functional")).append("() {\n");
+                  .append(convention.unitTestMethod(mm.name(), "functional"))
+                  .append("()").append(checkedThrowsClause(mm)).append(" {\n");
                 sb.append(i(3)).append("// Spring slice test — mocked deps via @MockBean\n");
                 sb.append(i(3)).append("// TODO: implement\n");
                 sb.append(i(2)).append("}\n\n");

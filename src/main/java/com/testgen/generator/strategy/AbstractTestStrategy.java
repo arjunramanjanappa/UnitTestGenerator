@@ -543,9 +543,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             if (aop.isEmpty() || mm.isProtected()) continue;
 
             for (String ann : aop) {
-                String testName = convention.unitTestMethod(mm.name(), ann.toLowerCase() + "_behaviour");
+                String testName    = convention.unitTestMethod(mm.name(), ann.toLowerCase() + "_behaviour");
+                String throwsDecl  = checkedThrowsClause(mm);
                 sb.append(i(indent)).append("@Test\n");
-                sb.append(i(indent)).append("void ").append(testName).append("() {\n");
+                sb.append(i(indent)).append("void ").append(testName).append("()").append(throwsDecl).append(" {\n");
                 sb.append(i(indent + 1)).append("// @").append(ann)
                   .append(" — ").append(annotationCategory(ann))
                   .append(" is active here (Spring proxy wraps subject)\n");
@@ -790,7 +791,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * If the root Exception (or Throwable) is already in the list it covers everything —
      * simplify to just " throws Exception" to avoid redundant declarations.
      */
-    private String checkedThrowsClause(MethodMetadata mm) {
+    protected String checkedThrowsClause(MethodMetadata mm) {
         if (!mm.throwsExceptions()) return "";
         List<String> exceptions = mm.thrownExceptions();
         // If broad Exception / Throwable is declared, no need to list narrower types
