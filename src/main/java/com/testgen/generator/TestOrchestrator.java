@@ -19,6 +19,9 @@ import org.w3c.dom.*;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.InputStream;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
 import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -229,43 +232,122 @@ public class TestOrchestrator {
         return Collections.unmodifiableSet(concrete);
     }
 
-    // ── Parent chain resolution (Feature 1) ────────────────────────────────
+    // ── Parent chain resolution ─────────────────────────────────────────────
 
     /**
-     * Resolves the parent chain from the source root's file index.
+     * Resolves the parent chain.
      *
-     * depth=0 → direct parent only (always resolved — needed for stub generation)
-     * depth=1 → direct parent + one grandparent
-     * depth=N → up to N+1 levels
+     * Priority per level:
+     *  1. Source file in fileIndex  → JavaParser (full fidelity)
+     *  2. Source not found          → reflection via Class.forName (framework/library classes)
+     *  3. Neither resolvable        → stop, warn
      *
-     * The direct parent is ALWAYS resolved when available in the source root,
-     * because generating ClassATest requires knowing ALL of ClassB's methods
-     * to stub them on the spy. The depth spinner controls additional ancestor levels.
+     * depth=0 → 1 level (direct parent); depth=N → N+1 levels
      */
     private List<ClassMetadata> resolveParentChain(ClassMetadata m,
                                                     Map<String, Path> fileIndex,
                                                     int depth) {
         List<ClassMetadata> chain = new ArrayList<>();
         ClassMetadata current = m;
-        // depth=0 → 1 level (direct parent); depth=N → N+1 levels
-        // <= ensures the direct parent is always resolved
         for (int level = 0; level <= depth; level++) {
             if (!current.hasSuperClass()) break;
-            Path parentFile = fileIndex.get(current.superClassName());
-            if (parentFile == null) {
-                log.warn("Parent class '{}' of '{}' not found in source root — stubs may be incomplete",
-                        current.superClassName(), m.className());
-                break;
+            String parentName = current.superClassName();
+
+            // 1. Source file in project
+            Path parentFile = fileIndex.get(parentName);
+            if (parentFile != null) {
+                Optional<ClassMetadata> parsed = classParser.parse(parentFile);
+                if (parsed.isPresent()) {
+                    ClassMetadata parent = classifier.classify(parsed.get());
+                    chain.add(parent);
+                    current = parent;
+                    continue;
+                }
             }
 
-            Optional<ClassMetadata> parsed = classParser.parse(parentFile);
-            if (parsed.isEmpty()) break;
+            // 2. Framework/library class — resolve via reflection
+            ClassMetadata reflected = resolveViaReflection(parentName, current.imports());
+            if (reflected != null) {
+                chain.add(reflected);
+                current = reflected;
+                continue;
+            }
 
-            ClassMetadata parent = classifier.classify(parsed.get());
-            chain.add(parent);
-            current = parent;
+            // 3. Unresolvable
+            log.warn("Parent '{}' of '{}' not found in source root or classpath",
+                    parentName, m.className());
+            break;
         }
         return chain;
+    }
+
+    /**
+     * Resolves a class from the classpath via reflection when its source is not
+     * in the project source root (e.g. Spring's RouteBuilder, HttpServlet, etc.).
+     *
+     * FQN lookup order:
+     *  a) Scan the child class's imports for an entry ending with ".SimpleName"
+     *  b) Try java.lang.SimpleName as fallback
+     */
+    private ClassMetadata resolveViaReflection(String simpleName, List<String> imports) {
+        String fqn = imports.stream()
+                .filter(imp -> imp.endsWith("." + simpleName))
+                .findFirst()
+                .orElseGet(() -> "java.lang." + simpleName);
+        try {
+            Class<?> clazz = Class.forName(fqn, false,
+                    Thread.currentThread().getContextClassLoader());
+            log.info("Resolved parent '{}' via reflection ({})", simpleName, fqn);
+            return buildMetadataFromReflection(clazz);
+        } catch (ClassNotFoundException e) {
+            log.debug("Parent '{}' ({}) not on classpath — skipping reflection resolution", simpleName, fqn);
+            return null;
+        }
+    }
+
+    /**
+     * Converts a reflected Class into a minimal ClassMetadata with method signatures.
+     * Fields are not populated (not needed for stub generation).
+     */
+    private ClassMetadata buildMetadataFromReflection(Class<?> clazz) {
+        List<MethodMetadata> methods = new ArrayList<>();
+        for (Method method : clazz.getDeclaredMethods()) {
+            int mod = method.getModifiers();
+            if (Modifier.isStatic(mod) || method.isSynthetic() || method.isBridge()) continue;
+            if (!Modifier.isPublic(mod) && !Modifier.isProtected(mod)) continue;
+
+            List<MethodMetadata.ParameterMetadata> params = Arrays.stream(method.getParameters())
+                    .map(p -> new MethodMetadata.ParameterMetadata(
+                            p.getType().getSimpleName(), p.getName()))
+                    .toList();
+            List<String> thrown = Arrays.stream(method.getExceptionTypes())
+                    .map(Class::getSimpleName)
+                    .toList();
+
+            methods.add(new MethodMetadata(
+                    method.getName(),
+                    method.getReturnType().getSimpleName(),
+                    params, thrown, List.of(),
+                    Modifier.isPublic(mod), Modifier.isProtected(mod),
+                    false, Modifier.isAbstract(mod), Modifier.isFinal(mod),
+                    false, false,
+                    List.of(), List.of(), List.of(), false, false, false
+            ));
+        }
+
+        String superName = clazz.getSuperclass() != null
+                && !clazz.getSuperclass().equals(Object.class)
+                ? clazz.getSuperclass().getSimpleName() : null;
+
+        return new ClassMetadata(
+                clazz.getSimpleName(), clazz.getPackageName(),
+                "[classpath:" + clazz.getName() + "]",
+                ClassType.POJO, List.of(), List.of(), methods, List.of(),
+                superName, List.of(),
+                Modifier.isAbstract(clazz.getModifiers()), clazz.isInterface(),
+                false, false, List.of(), null,
+                List.of(), List.of(), Set.of(), Map.of()
+        );
     }
 
     // ── Interface default method resolution (Feature 2) ────────────────────
