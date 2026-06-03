@@ -126,6 +126,9 @@ public class TestOrchestrator {
                 // Resolve parsed metadata for types used in method params (for typed inline init)
                 meta = meta.withParamTypeRegistry(resolveParamTypeRegistry(meta, fileIndex));
 
+                // Detect @Entity types instantiated inline via new X() — use MockedConstruction in tests
+                meta = meta.withEntityConstructions(resolveEntityConstructions(meta, fileIndex));
+
                 TestStrategy strategy = pickStrategy(meta, xmlRoutes);
                 List<GeneratedTest> tests = new ArrayList<>(strategy.generate(meta, convention));
 
@@ -337,7 +340,7 @@ public class TestOrchestrator {
                     Modifier.isPublic(mod), Modifier.isProtected(mod),
                     false, Modifier.isAbstract(mod), Modifier.isFinal(mod),
                     false, false,
-                    List.of(), List.of(), List.of(), false, false, false, List.of()
+                    List.of(), List.of(), List.of(), false, false, false, List.of(), List.of()
             ));
         }
 
@@ -352,7 +355,7 @@ public class TestOrchestrator {
                 superName, List.of(),
                 Modifier.isAbstract(clazz.getModifiers()), clazz.isInterface(),
                 false, false, List.of(), null,
-                List.of(), List.of(), Set.of(), Map.of()
+                List.of(), List.of(), Set.of(), Map.of(), Set.of()
         );
     }
 
@@ -424,6 +427,36 @@ public class TestOrchestrator {
             log.info("Generated companion TestData for {} in package {}",
                     depMeta.className(), meta.packageName());
         }
+    }
+
+    // ── Entity construction detection ──────────────────────────────────────
+
+    /**
+     * Resolves which types instantiated via new X() inside the class's methods
+     * are JPA @Entity / @Table classes. These need MockedConstruction in tests.
+     */
+    private Set<String> resolveEntityConstructions(ClassMetadata m, Map<String, Path> fileIndex) {
+        Set<String> entities = new HashSet<>();
+        m.methods().stream()
+                .filter(mm -> mm.constructedTypes() != null)
+                .flatMap(mm -> mm.constructedTypes().stream())
+                .distinct()
+                .forEach(typeName -> {
+                    Path srcFile = fileIndex.get(typeName);
+                    if (srcFile == null) return;
+                    try {
+                        com.github.javaparser.ast.CompilationUnit cu =
+                                com.github.javaparser.StaticJavaParser.parse(srcFile);
+                        cu.findFirst(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.class)
+                                .ifPresent(cls -> {
+                                    boolean isEntity = cls.getAnnotations().stream()
+                                            .map(a -> a.getNameAsString())
+                                            .anyMatch(a -> a.equals("Entity") || a.equals("Table"));
+                                    if (isEntity) entities.add(typeName);
+                                });
+                    } catch (Exception ignored) {}
+                });
+        return entities.isEmpty() ? Set.of() : Collections.unmodifiableSet(entities);
     }
 
     // ── Param type registry (typed inline init for non-TestData types) ──────

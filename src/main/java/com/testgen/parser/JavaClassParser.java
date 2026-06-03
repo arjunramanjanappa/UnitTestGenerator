@@ -94,7 +94,7 @@ public class JavaClassParser {
                     superClass, interfaces,
                     cls.isAbstract(), false,
                     hasLombok, hasBuilder, genericTypeParams, null,
-                    List.of(), List.of(), Set.of(), Map.of()  // parentChain / interfaceDefaults / concreteNames / paramTypeRegistry — resolved later
+                    List.of(), List.of(), Set.of(), Map.of(), Set.of()  // parentChain / ifaceDefaults / concreteNames / paramTypeRegistry / entityConstructions
             ));
 
         } catch (IOException e) {
@@ -267,6 +267,14 @@ public class JavaClassParser {
         List<ConditionScenario> conditionScenarios =
                 extractConditionScenarios(method, params);
 
+        // Inline object constructions: new X() — caller supplies these type names;
+        // TestOrchestrator filters to @Entity types for MockedConstruction generation
+        List<String> constructedTypes = method.findAll(ObjectCreationExpr.class).stream()
+                .map(expr -> expr.getType().getNameAsString())
+                .filter(name -> !name.isEmpty() && Character.isUpperCase(name.charAt(0)))
+                .distinct()
+                .toList();
+
         return new MethodMetadata(
                 method.getNameAsString(),
                 method.getTypeAsString(),
@@ -277,7 +285,7 @@ public class JavaClassParser {
                 false,
                 superCalls, staticCallClasses, helperCalls,
                 hasConditionals, hasNumericComparisons, hasTryCatch,
-                conditionScenarios
+                conditionScenarios, constructedTypes
         );
     }
 

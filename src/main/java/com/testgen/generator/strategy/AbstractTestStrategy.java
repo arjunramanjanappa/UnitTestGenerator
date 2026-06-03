@@ -211,6 +211,8 @@ public abstract class AbstractTestStrategy implements TestStrategy {
              + "import org.mockito.*;\n"
              + "import org.mockito.junit.jupiter.MockitoExtension;\n"
              + "import static org.mockito.Mockito.mockStatic;\n"
+             + "import static org.mockito.Mockito.mockConstruction;\n"
+             + "import org.mockito.MockedConstruction;\n"
              + "import org.springframework.context.ApplicationContext;\n"
              + "import org.springframework.test.util.ReflectionTestUtils;\n"
              + "import java.math.BigDecimal;\n"
@@ -864,6 +866,68 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
+    // ── @Entity MockedConstruction test ─────────────────────────────────────
+
+    /**
+     * Generates a test that intercepts inline 'new EntityClass()' constructions
+     * using Mockito's MockedConstruction.
+     *
+     * When a method body contains 'new TpibFtPayee()', the entity's JPA lifecycle
+     * hooks or validators could fire. MockedConstruction replaces the real object
+     * with a mock, preventing any DB-related behaviour during the unit test.
+     */
+    protected String buildEntityConstructionTest(MethodMetadata mm, String subject,
+                                                  ClassMetadata m, int indent) {
+        // Only include entity types actually constructed in this specific method
+        List<String> methodEntityTypes = mm.constructedTypes().stream()
+                .filter(t -> m.entityConstructions().contains(t))
+                .toList();
+        if (methodEntityTypes.isEmpty()) return "";
+
+        String testName = convention.unitTestMethod(mm.name(),
+                "withEntityMock", buildParamSuffix(mm));
+        String throwsDecl = checkedThrowsClause(mm);
+        StringBuilder sb = new StringBuilder();
+
+        sb.append(i(indent)).append("@Test\n");
+        sb.append(i(indent)).append("void ").append(testName).append("()").append(throwsDecl).append(" {\n");
+        sb.append(i(indent + 1))
+          .append("// @Entity types are created inline — MockedConstruction intercepts new X()\n");
+        sb.append(i(indent + 1))
+          .append("// preventing JPA lifecycle hooks / validators from firing during unit test\n");
+
+        // Open one try-with-resources per entity type
+        int extraIndent = 0;
+        for (String entityType : methodEntityTypes) {
+            sb.append(i(indent + 1 + extraIndent))
+              .append("try (MockedConstruction<").append(entityType).append("> mocked")
+              .append(entityType).append(" = mockConstruction(").append(entityType).append(".class)) {\n");
+            extraIndent++;
+        }
+
+        int bodyIndent = indent + 1 + extraIndent;
+        buildParamSetup(mm, sb, bodyIndent, m.concreteClassNames(), m.paramTypeRegistry());
+        if (!mm.isProtected()) buildDirectCall(mm, subject, sb, bodyIndent);
+
+        // Capture and assert on mocked entity
+        for (String entityType : methodEntityTypes) {
+            sb.append(i(bodyIndent)).append("// Verify the ").append(entityType)
+              .append(" was constructed and interacted with as expected\n");
+            sb.append(i(bodyIndent)).append(entityType).append(" mocked = mocked")
+              .append(entityType).append(".constructed().get(0);\n");
+            sb.append(i(bodyIndent)).append("assertNotNull(mocked);\n");
+            sb.append(i(bodyIndent))
+              .append("// TODO: verify(mocked).setField(expectedValue); or verify repository.save(mocked);\n");
+        }
+
+        // Close try-with-resources blocks
+        for (int i = extraIndent; i > 0; i--) {
+            sb.append(i(indent + i)).append("}\n");
+        }
+        sb.append(i(indent)).append("}\n\n");
+        return sb.toString();
+    }
+
     // ── Pattern H: exception flow test ──────────────────────────────────────
 
     protected String buildExceptionFlowTest(MethodMetadata mm, String subject,
@@ -1134,6 +1198,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         // Pattern H: exception flow test (try/catch)
         if (mm.hasTryCatch()) {
             sb.append(buildExceptionFlowTest(mm, subject, m, indent));
+        }
+
+        // @Entity inline construction — use MockedConstruction to intercept new X()
+        if (mm.hasConstructedTypes() && m.hasEntityConstructions()) {
+            sb.append(buildEntityConstructionTest(mm, subject, m, indent));
         }
 
         // @ParameterizedTest for primitive / String params

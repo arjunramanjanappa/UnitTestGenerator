@@ -21,7 +21,8 @@ public record MethodMetadata(
         boolean hasConditionals,                // if/else/switch/ternary
         boolean hasNumericComparisons,          // >, <, >=, <=, compareTo
         boolean hasTryCatch,                    // try/catch blocks
-        List<ConditionScenario> conditionScenarios  // detected branch conditions with scenarios
+        List<ConditionScenario> conditionScenarios, // detected branch conditions with scenarios
+        List<String> constructedTypes           // types instantiated via 'new X()' in body
 ) {
     public boolean hasReturnValue() {
         return !"void".equals(returnType);
@@ -49,6 +50,10 @@ public record MethodMetadata(
 
     public boolean hasConditionScenarios() {
         return conditionScenarios != null && !conditionScenarios.isEmpty();
+    }
+
+    public boolean hasConstructedTypes() {
+        return constructedTypes != null && !constructedTypes.isEmpty();
     }
 
     public record ParameterMetadata(String type, String name) {}
