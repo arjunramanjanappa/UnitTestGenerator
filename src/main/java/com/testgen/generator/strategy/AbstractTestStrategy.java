@@ -785,10 +785,13 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             case "boolean", "Boolean" -> "false";
             case "String"     -> "\"testValue\"";
             default -> {
-                // For entity/domain types: use mock(Type.class)
-                // This always compiles, prevents JPA lifecycle, and doesn't
-                // require a companion TestData class to exist
                 if (!raw.isEmpty() && Character.isUpperCase(raw.charAt(0))) {
+                    // If the type is in the project source root, its TestData WILL be generated
+                    // → use buildValidType() for realistic field values and 95% coverage
+                    if (m.concreteClassNames() != null && m.concreteClassNames().contains(raw)) {
+                        yield raw + "TestData.buildValid" + raw + "()";
+                    }
+                    // External type (not in source root) → mock() avoids JPA lifecycle
                     yield "mock(" + raw + ".class)";
                 }
                 yield "null";

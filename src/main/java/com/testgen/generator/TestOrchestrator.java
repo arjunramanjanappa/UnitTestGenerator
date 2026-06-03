@@ -142,6 +142,10 @@ public class TestOrchestrator {
                 // so the generated tests compile without missing XxxTestData references
                 generateDependentTestData(meta, tests, javaFiles);
 
+                // Generate TestData for @Repository method return entity types
+                // (TPIBCasCounter returned by findByInternalId etc.) to cover all code paths
+                generateRepoReturnTestData(meta, tests, javaFiles, fileIndex);
+
                 for (GeneratedTest test : tests) {
                     if (dryRun) {
                         generatedFiles.add("[DRY-RUN] " + fileWriter.resolveTargetPath(test, targetRoot));
@@ -460,6 +464,69 @@ public class TestOrchestrator {
                     } catch (Exception ignored) {}
                 });
         return entities.isEmpty() ? Set.of() : Collections.unmodifiableSet(entities);
+    }
+
+    // ── Repo return type TestData generation ───────────────────────────────
+
+    /**
+     * For every method return type of a service-locator @Repository that exists in
+     * the project source root, generates a companion TestData file.
+     *
+     * Example: TPIBCasCounterRepo.findByInternalId() returns TPIBCasCounter (@Entity).
+     * → Generates TPIBCasCounterTestData.java alongside the test, with:
+     *     buildValidTPIBCasCounter()   — all fields set with typed defaults
+     *     buildInvalidTPIBCasCounter() — constraint violations
+     *   so when(repo.find()).thenReturn(TPIBCasCounterTestData.buildValidTPIBCasCounter())
+     *   gives a realistic object whose fields can be asserted on.
+     */
+    private void generateRepoReturnTestData(ClassMetadata meta,
+                                             List<GeneratedTest> tests,
+                                             List<Path> alreadyScanned,
+                                             Map<String, Path> fileIndex) {
+        if (!meta.hasServiceLocatorRepos()) return;
+
+        Set<String> alreadyScannedNames = alreadyScanned.stream()
+                .map(p -> p.getFileName().toString().replace(".java", ""))
+                .collect(Collectors.toSet());
+
+        Set<String> addedFiles = tests.stream()
+                .map(GeneratedTest::fileName)
+                .collect(Collectors.toSet());
+
+        meta.serviceLocatorRepos().forEach(sla ->
+            sla.repoCalls().forEach(call -> {
+                if (call.returnType() == null) return;
+
+                // Extract entity class name from return type (strips List<>, Optional<>, etc.)
+                String entityType;
+                String rt = call.returnType();
+                if (rt.contains("<")) {
+                    entityType = rt.substring(rt.indexOf('<') + 1, rt.lastIndexOf('>'))
+                                   .replaceAll("<.*>", "").trim();
+                } else {
+                    entityType = rt.replaceAll("<.*>", "").trim();
+                }
+
+                if (entityType.isEmpty() || !Character.isUpperCase(entityType.charAt(0))) return;
+                if (alreadyScannedNames.contains(entityType)) return;
+
+                String testDataFile = entityType + "TestData.java";
+                if (!addedFiles.add(testDataFile)) return; // already added
+
+                Path srcFile = fileIndex.get(entityType);
+                if (srcFile == null) return; // external type — can't generate
+
+                classParser.parse(srcFile).ifPresent(parsed -> {
+                    ClassMetadata enriched = classifier.classify(parsed)
+                            .withConcreteClassNames(meta.concreteClassNames())
+                            .withPackageName(meta.packageName())   // co-locate with test
+                            .withImports(meta.imports());           // use ClassA's FQN authority
+                    tests.add(dataBuilderGenerator.generate(enriched));
+                    log.info("Generated TestData for repo return type: {} (from {})",
+                            entityType, sla.repoType());
+                });
+            })
+        );
     }
 
     // ── Service locator repo resolution ────────────────────────────────────
