@@ -48,7 +48,7 @@ public class ControllerTestStrategy extends AbstractTestStrategy {
         sb.append(buildSubjectDeclaration(m, 2));
 
         sb.append(i(2)).append("@BeforeEach\n");
-        sb.append(i(2)).append("void setUp() {\n");
+        sb.append(i(2)).append("void setUp() throws Exception {\n");
         if (requiresSpyPattern(m)) {
             sb.append(i(3)).append(m.className()).append(" rawInstance = new ").append(m.className()).append("();\n");
             sb.append(i(3)).append("subject = spy(rawInstance);\n");

@@ -529,7 +529,8 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         boolean useSpy = !usesMockBeans && requiresSpyPattern(m);
 
         sb.append(i(indent)).append("@BeforeEach\n");
-        sb.append(i(indent)).append("void setUp() {\n");
+        // throws Exception: required when parent/helper stubs call methods that declare checked exceptions
+        sb.append(i(indent)).append("void setUp() throws Exception {\n");
 
         if (useSpy) {
             // Spy pattern: instantiate and wrap

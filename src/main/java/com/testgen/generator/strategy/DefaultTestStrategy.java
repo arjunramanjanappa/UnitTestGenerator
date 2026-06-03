@@ -38,7 +38,7 @@ public class DefaultTestStrategy extends AbstractTestStrategy {
             sb.append(i(2)).append("// Using CALLS_REAL_METHODS to test concrete methods.\n");
             sb.append(i(2)).append("private ").append(cls).append(" subject;\n\n");
             sb.append(i(2)).append("@BeforeEach\n");
-            sb.append(i(2)).append("void setUp() {\n");
+            sb.append(i(2)).append("void setUp() throws Exception {\n");
             sb.append(i(3)).append("subject = mock(").append(cls).append(".class, CALLS_REAL_METHODS);\n");
             sb.append(i(2)).append("}\n\n");
         } else {
