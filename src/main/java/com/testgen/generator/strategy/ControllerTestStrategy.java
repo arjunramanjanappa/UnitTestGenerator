@@ -50,8 +50,7 @@ public class ControllerTestStrategy extends AbstractTestStrategy {
         sb.append(i(2)).append("@BeforeEach\n");
         sb.append(i(2)).append("void setUp() throws Exception {\n");
         if (requiresSpyPattern(m)) {
-            sb.append(i(3)).append(m.className()).append(" rawInstance = new ").append(m.className()).append("();\n");
-            sb.append(i(3)).append("subject = spy(rawInstance);\n");
+            sb.append(i(3)).append("subject = mock(").append(m.className()).append(".class, CALLS_REAL_METHODS);\n");
             for (var f : m.mockCandidates()) {
                 if (!f.isApplicationContext() && !f.isConstructorInjected()) {
                     sb.append(i(3)).append("ReflectionTestUtils.setField(subject, \"")

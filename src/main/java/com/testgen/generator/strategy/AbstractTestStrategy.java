@@ -647,26 +647,22 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("void setUp() throws Exception {\n");
 
         if (useSpy) {
-            // Spy pattern: instantiate and wrap
-            sb.append(i(indent + 1)).append("// spy() required: class has superclass or internal helper methods\n");
+            // Use mock(Class, CALLS_REAL_METHODS) instead of spy(new Class()).
+            //
+            // spy(new Class()) calls the constructor which can cause StackOverflowError
+            // in BAU Spring classes whose constructors trigger circular method calls
+            // or complex Mockito proxy initialization (Objects.requireNonNull loop).
+            //
+            // mock(Class, CALLS_REAL_METHODS) uses Objenesis — skips the constructor,
+            // calls real method implementations for non-stubbed methods, and allows
+            // all the same doReturn/doNothing stubbing as a regular spy.
+            sb.append(i(indent + 1)).append("// CALLS_REAL_METHODS: avoids StackOverflow from constructor\n");
+            sb.append(i(indent + 1)).append(subject).append(" = mock(")
+              .append(m.className()).append(".class, CALLS_REAL_METHODS);\n\n");
 
-            // Constructor injection: spy(new Class(dep1, dep2))
-            List<FieldMetadata> ctorFields = m.mockCandidates().stream()
-                    .filter(FieldMetadata::isConstructorInjected).toList();
-            if (!ctorFields.isEmpty()) {
-                String ctorArgs = ctorFields.stream()
-                        .map(FieldMetadata::name).collect(Collectors.joining(", "));
-                sb.append(i(indent + 1)).append(m.className()).append(" rawInstance = new ")
-                  .append(m.className()).append("(").append(ctorArgs).append(");\n");
-            } else {
-                sb.append(i(indent + 1)).append(m.className()).append(" rawInstance = new ")
-                  .append(m.className()).append("();\n");
-            }
-            sb.append(i(indent + 1)).append(subject).append(" = spy(rawInstance);\n\n");
-
-            // Field-injected mocks via ReflectionTestUtils (BAU field injection)
+            // Inject all mocks via ReflectionTestUtils (BAU field injection — source not modified)
             for (FieldMetadata f : m.mockCandidates()) {
-                if (!f.isApplicationContext() && !f.isConstructorInjected()) {
+                if (!f.isApplicationContext()) {
                     sb.append(i(indent + 1)).append("ReflectionTestUtils.setField(").append(subject)
                       .append(", \"").append(f.name()).append("\", ").append(f.name()).append(");\n");
                 }
