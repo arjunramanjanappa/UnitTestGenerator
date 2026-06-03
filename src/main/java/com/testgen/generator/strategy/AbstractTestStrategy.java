@@ -158,13 +158,23 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             collectMethodTypes(m.interfaceDefaultMethods(), usedSimpleNames);
         }
 
-        // Service-locator @Repository mock fields (e.g. @Mock TPIBFTPayeeRepo)
+        // Service-locator @Repository mock fields + method param/return types
         if (m.hasServiceLocatorRepos()) {
             m.serviceLocatorRepos().forEach(sla -> {
                 usedSimpleNames.add(sla.repoType());
-                // Also collect param/return types from repo method calls
                 sla.repoCalls().forEach(call -> {
-                    usedSimpleNames.add(call.returnType());
+                    // Return type raw (strip generics)
+                    String retRaw = call.returnType() != null
+                            ? call.returnType().replaceAll("<.*>", "").trim() : null;
+                    if (retRaw != null) usedSimpleNames.add(retRaw);
+                    // Inner type of Optional<X>, List<X> etc.
+                    if (call.returnType() != null && call.returnType().contains("<")) {
+                        String inner = call.returnType()
+                                .substring(call.returnType().indexOf('<') + 1,
+                                           call.returnType().lastIndexOf('>'))
+                                .replaceAll("<.*>", "").trim();
+                        if (!inner.isEmpty()) usedSimpleNames.add(inner);
+                    }
                     call.params().forEach(p -> usedSimpleNames.add(p.type()));
                 });
             });
@@ -181,13 +191,25 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             usedSimpleNames.addAll(m.entityConstructions());
         }
 
-        // Build FQN → simple-name map from the source file's imports
+        // Build FQN → simple-name map: start with the source class's own imports
         Map<String, String> simpleToFqn = new LinkedHashMap<>();
         for (String fqn : m.imports()) {
             String simpleName = fqn.contains(".")
                     ? fqn.substring(fqn.lastIndexOf('.') + 1)
                     : fqn;
             simpleToFqn.put(simpleName, fqn);
+        }
+
+        // Also add imports from paramTypeRegistry entries (repo interfaces, dep classes)
+        // so types like TPIBCasCounter returned by repo methods can be resolved
+        if (m.paramTypeRegistry() != null) {
+            m.paramTypeRegistry().values().forEach(dep ->
+                dep.imports().forEach(fqn -> {
+                    String simple = fqn.contains(".")
+                            ? fqn.substring(fqn.lastIndexOf('.') + 1)
+                            : fqn;
+                    simpleToFqn.putIfAbsent(simple, fqn); // don't override source class's imports
+                }));
         }
 
         // Emit an import for each used type that appears in the source imports
@@ -734,22 +756,40 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
-    /** Returns a sensible default return value for a repository method call. */
+    /**
+     * Returns a compilable return value for a repository mock stub.
+     *
+     * For collection/optional types: return empty instances.
+     * For single entity/domain types: use mock(Type.class) — always compiles,
+     *   prevents JPA lifecycle hooks, doesn't require a TestData class to exist.
+     * For primitives: use typed literals.
+     */
     private String repoReturnValue(String returnType, ClassMetadata m) {
-        if (returnType == null) return "null";
+        if (returnType == null || returnType.isBlank()) return "null";
         String raw = returnType.replaceAll("<.*>", "").trim();
+
+        // Extract the inner type for generics (e.g. "Optional<TPIBCasCounter>" → "TPIBCasCounter")
+        String inner = returnType.contains("<")
+                ? returnType.substring(returnType.indexOf('<') + 1, returnType.lastIndexOf('>')).trim()
+                : null;
+
         return switch (raw) {
             case "List"       -> "new java.util.ArrayList<>()";
             case "Set"        -> "new java.util.HashSet<>()";
             case "Collection" -> "new java.util.ArrayList<>()";
-            case "Optional"   -> "java.util.Optional.empty()";
-            case "void"       -> ""; // handled by doNothing
+            case "Optional"   -> inner != null
+                    ? "java.util.Optional.of(mock(" + inner.replaceAll("<.*>","").trim() + ".class))"
+                    : "java.util.Optional.empty()";
+            case "void"       -> "";
             case "long", "Long", "int", "Integer" -> "0";
             case "boolean", "Boolean" -> "false";
+            case "String"     -> "\"testValue\"";
             default -> {
-                // If it's a known project type, use its TestData builder
-                if (m.concreteClassNames() != null && m.concreteClassNames().contains(raw)) {
-                    yield raw + "TestData.buildValid" + raw + "()";
+                // For entity/domain types: use mock(Type.class)
+                // This always compiles, prevents JPA lifecycle, and doesn't
+                // require a companion TestData class to exist
+                if (!raw.isEmpty() && Character.isUpperCase(raw.charAt(0))) {
+                    yield "mock(" + raw + ".class)";
                 }
                 yield "null";
             }
