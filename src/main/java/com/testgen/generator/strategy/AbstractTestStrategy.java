@@ -1079,15 +1079,19 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         buildParamSetup(mm, sb, bodyIndent, m.concreteClassNames(), m.paramTypeRegistry());
         if (!mm.isProtected()) buildDirectCall(mm, subject, sb, bodyIndent);
 
-        // Capture and assert on mocked entity
+        // Capture and assert on mocked entity — guard against IndexOutOfBoundsException:
+        // constructed() is empty if the method threw before reaching 'new EntityType()'
         for (String entityType : methodEntityTypes) {
-            sb.append(i(bodyIndent)).append("// Verify the ").append(entityType)
-              .append(" was constructed and interacted with as expected\n");
+            sb.append(i(bodyIndent)).append("// Safe access: verify entity was actually constructed\n");
+            sb.append(i(bodyIndent))
+              .append("assertFalse(mocked").append(entityType)
+              .append(".constructed().isEmpty(), \"Expected new ").append(entityType)
+              .append("() to be called — check method conditions\");\n");
             sb.append(i(bodyIndent)).append(entityType).append(" mocked = mocked")
               .append(entityType).append(".constructed().get(0);\n");
             sb.append(i(bodyIndent)).append("assertNotNull(mocked);\n");
             sb.append(i(bodyIndent))
-              .append("// TODO: verify(mocked).setField(expectedValue); or verify repository.save(mocked);\n");
+              .append("// TODO: verify(mocked).setField(expectedValue); or verify(repository).save(mocked);\n");
         }
 
         // Close try-with-resources blocks

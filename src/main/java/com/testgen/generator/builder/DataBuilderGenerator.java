@@ -164,14 +164,14 @@ public class DataBuilderGenerator {
             sb.append(I2).append("return ").append(m.className()).append(".builder()\n");
             for (FieldMetadata f : nonStaticFields(m)) {
                 sb.append(I3).append(".").append(f.name())
-                  .append("(").append(validValue(f)).append(")\n");
+                  .append("(").append(fieldValue(f, m)).append(")\n");
             }
             sb.append(I3).append(".build();\n");
         } else {
             sb.append(I2).append(m.className()).append(" obj = new ").append(m.className()).append("();\n");
             for (FieldMetadata f : settableFields(m)) {   // skip fields with no setter
                 String setter = "set" + setterSuffix(f);
-                sb.append(I2).append("obj.").append(setter).append("(").append(validValue(f)).append(");\n");
+                sb.append(I2).append("obj.").append(setter).append("(").append(fieldValue(f, m)).append(");\n");
             }
             sb.append(I2).append("return obj;\n");
         }
@@ -367,6 +367,29 @@ public class DataBuilderGenerator {
     /**
      * Returns a value that satisfies the field's constraints.
      */
+    /**
+     * Returns the value to use for a field in buildValidXxx(), aware of nested VO types.
+     *
+     * When a VO has a field of another VO type (e.g. TestVO testField), calling
+     * anotherTestVO.getTestField() would return null causing NPE.
+     * This method uses TestData builder for nested VO fields when available.
+     */
+    private String fieldValue(FieldMetadata f, ClassMetadata m) {
+        String rawType = f.type().replaceAll("<.*>", "").trim();
+        String base = validValue(f);
+        // If validValue falls to null for a domain object type, use TestData builder
+        if (base.startsWith("null") && !rawType.isEmpty()
+                && Character.isUpperCase(rawType.charAt(0))) {
+            if (m.concreteClassNames() != null && m.concreteClassNames().contains(rawType)) {
+                return rawType + "TestData.buildValid" + rawType + "()";
+            }
+            if (m.paramTypeRegistry() != null && m.paramTypeRegistry().containsKey(rawType)) {
+                return "new " + rawType + "()";
+            }
+        }
+        return base;
+    }
+
     private String validValue(FieldMetadata f) {
         Map<String, String> c = f.constraints();
         String type = f.type().replaceAll("<.*>", "").trim();
