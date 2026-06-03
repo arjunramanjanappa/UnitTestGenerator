@@ -102,7 +102,19 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             case "BigInteger"    -> "BigInteger.ONE";
             case "LocalDate"     -> "LocalDate.now()";
             case "LocalDateTime" -> "LocalDateTime.now()";
+            case "LocalTime"     -> "java.time.LocalTime.now()";
+            case "ZonedDateTime" -> "java.time.ZonedDateTime.now()";
+            case "OffsetDateTime"-> "java.time.OffsetDateTime.now()";
+            case "Instant"       -> "java.time.Instant.now()";
             case "UUID"          -> "UUID.randomUUID()";
+            // java.sql types — no-arg constructor does NOT exist
+            case "Timestamp",
+                 "java.sql.Timestamp"  -> "new java.sql.Timestamp(System.currentTimeMillis())";
+            case "Date",
+                 "java.sql.Date"       -> "new java.sql.Date(System.currentTimeMillis())";
+            case "Time",
+                 "java.sql.Time"       -> "new java.sql.Time(System.currentTimeMillis())";
+            case "java.util.Date"      -> "new java.util.Date()";
             case "void"          -> "";
             case "List"          -> "List.of()";
             case "Map"           -> "Map.of()";
@@ -1320,9 +1332,16 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 continue;
             }
 
-            // External / truly unknown type — use no-arg constructor; avoids NPE vs null
-            sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
-              .append(" = new ").append(rawType).append("(); // external type — set required fields manually\n");
+            // External / unknown type — check defaultValue first (handles java.sql.Timestamp etc.)
+            // before falling back to new Type() which may not have a no-arg constructor
+            String extVal = defaultValue(rawType);
+            if (!extVal.startsWith("null")) {
+                sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
+                  .append(" = ").append(extVal).append(";\n");
+            } else {
+                sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
+                  .append(" = new ").append(rawType).append("(); // external type — set required fields manually\n");
+            }
         }
     }
 

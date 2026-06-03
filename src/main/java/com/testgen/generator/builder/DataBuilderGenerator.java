@@ -446,7 +446,19 @@ public class DataBuilderGenerator {
             case "BigInteger"            -> "BigInteger.ONE";
             case "LocalDate"             -> "LocalDate.now()";
             case "LocalDateTime"         -> "LocalDateTime.now()";
+            case "LocalTime"             -> "java.time.LocalTime.now()";
+            case "ZonedDateTime"         -> "java.time.ZonedDateTime.now()";
+            case "OffsetDateTime"        -> "java.time.OffsetDateTime.now()";
+            case "Instant"               -> "java.time.Instant.now()";
             case "UUID"                  -> "UUID.randomUUID()";
+            // java.sql — no-arg constructor does not exist
+            case "Timestamp",
+                 "java.sql.Timestamp"    -> "new java.sql.Timestamp(System.currentTimeMillis())";
+            case "Date",
+                 "java.sql.Date"         -> "new java.sql.Date(System.currentTimeMillis())";
+            case "Time",
+                 "java.sql.Time"         -> "new java.sql.Time(System.currentTimeMillis())";
+            case "java.util.Date"        -> "new java.util.Date()";
             case "List"                  -> "List.of()";
             case "Map"                   -> "Map.of()";
             case "Set"                   -> "Set.of()";
