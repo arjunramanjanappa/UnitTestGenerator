@@ -673,6 +673,25 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
+    // ── Generic accessibility helper ────────────────────────────────────────
+
+    /**
+     * Returns true only if methodName is declared in ClassA's OWN public/protected methods.
+     *
+     * Generic rule applied to ALL active lenient() stubs:
+     *   lenient().when(subject).method() compiles ONLY when 'method' belongs to
+     *   ClassA itself — because the test class is in ClassA's package.
+     *
+     *   Inherited methods (from parent ClassB in a different package) with protected
+     *   access are NOT callable from the test class, causing compile errors.
+     *   → emit as a comment instead of active code.
+     */
+    protected boolean isOwnAccessibleMethod(String methodName, ClassMetadata m) {
+        return m.methods().stream()
+                .filter(mm -> mm.isPublic() || mm.isProtected())
+                .anyMatch(mm -> mm.name().equals(methodName));
+    }
+
     // ── Service-locator repo stubs ──────────────────────────────────────────
 
     /**
@@ -687,10 +706,18 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         StringBuilder sb = new StringBuilder();
         sb.append(i(indent)).append("// Service-locator stubs — return mocked @Repository instead of real DAO\n");
         for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
-            // Stub makeDAO to return the mock repo
-            sb.append(i(indent))
-              .append("lenient().doReturn(").append(sla.fieldName()).append(").when(")
-              .append(subject).append(").").append(sla.locatorMethod()).append("(any());\n");
+            // Stub the service-locator method (e.g. makeDAO) on the spy.
+            // If makeDAO is from a parent class (protected, different package), calling
+            // subject.makeDAO() from the test won't compile — emit as a comment.
+            String locatorStub = "lenient().doReturn(" + sla.fieldName() + ").when("
+                    + subject + ")." + sla.locatorMethod() + "(any());";
+            if (isOwnAccessibleMethod(sla.locatorMethod(), m)) {
+                sb.append(i(indent)).append(locatorStub).append("\n");
+            } else {
+                sb.append(i(indent)).append("// ").append(locatorStub)
+                  .append(" // TODO: ").append(sla.locatorMethod())
+                  .append("() is from parent class — verify access before enabling\n");
+            }
 
             // Stub each detected method call on the repo — prevents NPE and covers DB call lines
             for (com.testgen.parser.ServiceLocatorAccess.RepoCall call : sla.repoCalls()) {
