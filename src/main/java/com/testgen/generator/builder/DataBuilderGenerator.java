@@ -99,7 +99,11 @@ public class DataBuilderGenerator {
             simpleToFqn.put(simple, fqn);
         }
         // Also register the source class itself (for TestData that reference the main class)
-        simpleToFqn.put(m.className(), m.fullClassName());
+        // Only register the class's own FQN when NOT already found in the import list.
+        // For companion TestData (e.g. MSBaseVOTestData placed in ClassA's package),
+        // m.fullClassName() would be wrong (ClassA's package + MSBaseVO class name).
+        // The correct FQN must come from ClassA's imports — never overwrite it.
+        simpleToFqn.putIfAbsent(m.className(), m.fullClassName());
 
         // Collect all domain type simple names referenced in this TestData
         Set<String> usedTypes = new LinkedHashSet<>();
