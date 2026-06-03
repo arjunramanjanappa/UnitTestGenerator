@@ -198,6 +198,22 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                     ? fqn.substring(fqn.lastIndexOf('.') + 1)
                     : fqn;
             simpleToFqn.put(simpleName, fqn);
+
+            // Handle static member imports: "import static com.uob.MasterUtil.METHOD_NAME"
+            // JavaParser returns "com.uob.MasterUtil.METHOD_NAME" as the FQN.
+            // simpleName → "METHOD_NAME" but we also need "MasterUtil" → "com.uob.MasterUtil"
+            // so MockedStatic<MasterUtil> gets its import.
+            if (fqn.contains(".")) {
+                int lastDot = fqn.lastIndexOf('.');
+                int prevDot  = fqn.lastIndexOf('.', lastDot - 1);
+                if (prevDot >= 0) {
+                    String parentSeg = fqn.substring(prevDot + 1, lastDot);
+                    if (!parentSeg.isEmpty() && Character.isUpperCase(parentSeg.charAt(0))) {
+                        // parentSeg looks like a class name — register it too
+                        simpleToFqn.putIfAbsent(parentSeg, fqn.substring(0, lastDot));
+                    }
+                }
+            }
         }
 
         // Also add imports from paramTypeRegistry entries (repo interfaces, dep classes)

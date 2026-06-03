@@ -557,8 +557,13 @@ public class DataBuilderGenerator {
     private List<FieldMetadata> settableFields(ClassMetadata m) {
         List<FieldMetadata> candidates = nonStaticFields(m);
 
-        // Lombok generates all setters — include everything
-        if (m.hasLombok()) return candidates;
+        // Only skip the setter check when a setter-generating Lombok annotation is present.
+        // @Getter alone does NOT generate setters — don't skip the check in that case.
+        // @Data, @Setter, @SuperBuilder → generates setters for all non-final fields
+        boolean lombokGeneratesSetters = m.annotations().stream()
+                .anyMatch(a -> a.equals("Data") || a.equals("Setter")
+                        || a.equals("SuperBuilder") || a.equals("AllArgsConstructor"));
+        if (lombokGeneratesSetters) return candidates;
 
         // Build set of explicitly declared setter names in the class
         Set<String> declaredSetters = m.methods().stream()
@@ -566,11 +571,12 @@ public class DataBuilderGenerator {
                 .map(MethodMetadata::name)
                 .collect(Collectors.toSet());
 
+        // Also accept fields with no declared setter but with Lombok @Builder
+        // (builder uses direct field access, not setters)
+        if (m.hasBuilder()) return candidates;
+
         return candidates.stream()
-                .filter(f -> {
-                    String expectedSetter = "set" + setterSuffix(f);
-                    return declaredSetters.contains(expectedSetter);
-                })
+                .filter(f -> declaredSetters.contains("set" + setterSuffix(f)))
                 .toList();
     }
 
