@@ -142,6 +142,7 @@ public class DataBuilderGenerator {
     /** Same as nonStaticFields but without the Autowired filter — used for import collection. */
     private List<FieldMetadata> nonStaticFieldsRaw(ClassMetadata m) {
         return m.fields().stream()
+                .filter(f -> !f.isStatic())
                 .filter(f -> !f.isApplicationContext())
                 .filter(f -> !f.isValue())
                 .toList();
@@ -531,6 +532,7 @@ public class DataBuilderGenerator {
 
     private List<FieldMetadata> nonStaticFields(ClassMetadata m) {
         return m.fields().stream()
+                .filter(f -> !f.isStatic())               // skip static (e.g. serialVersionUID)
                 .filter(f -> !f.annotations().contains("Autowired"))
                 .filter(f -> !f.isApplicationContext())
                 .filter(f -> !f.isValue())

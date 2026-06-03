@@ -12,12 +12,13 @@ public record FieldMetadata(
         boolean isValue,
         String valueKey,
         boolean isFinal,
+        boolean isStatic,                // static fields (e.g. serialVersionUID) — never set in TestData
         boolean isApplicationContext,
         boolean isConstructorInjected,   // injected via constructor (no @Autowired on field)
         Map<String, String> constraints  // validation annotation name → value (e.g. "Min"->"1")
 ) {
     public boolean isMockCandidate() {
-        return isInjected && !isValue;
+        return isInjected && !isValue && !isStatic;
     }
 
     public boolean requiresReflectionSetup() {

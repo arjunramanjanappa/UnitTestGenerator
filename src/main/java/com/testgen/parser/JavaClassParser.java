@@ -171,7 +171,8 @@ public class JavaClassParser {
 
                 result.add(new FieldMetadata(
                         var.getNameAsString(), type, simpleType, annotations,
-                        effectivelyInjected, isValue, valueKey, field.isFinal(), isAppCtx,
+                        effectivelyInjected, isValue, valueKey,
+                        field.isFinal(), field.isStatic(), isAppCtx,
                         isCtorInj, constraints
                 ));
             }
