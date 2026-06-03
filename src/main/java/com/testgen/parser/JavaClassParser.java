@@ -277,10 +277,41 @@ public class JavaClassParser {
 
         // Cast expressions: (SomeType) expr — detects service-locator pattern
         //   TPIBFTPayeeRepo repo = (TPIBFTPayeeRepo) makeDAO(BEAN_ID)
-        // TestOrchestrator filters to @Repository types
+        // Also tracks which methods are called on each cast variable so we can generate
+        // proper when(repo.getPayeeDetails(any(), any())).thenReturn(...) stubs.
         List<String> castToTypes = method.findAll(CastExpr.class).stream()
                 .map(cast -> cast.getType().asString().replaceAll("<.*>", "").trim())
                 .filter(name -> !name.isEmpty() && Character.isUpperCase(name.charAt(0)))
+                .distinct()
+                .toList();
+
+        // Map varName → castType for method-call detection below
+        // e.g. "repo" → "TPIBFTPayeeRepo"
+        java.util.Map<String, String> castVarToType = new java.util.HashMap<>();
+        method.findAll(VariableDeclarator.class).forEach(var ->
+                var.getInitializer()
+                   .filter(init -> init instanceof CastExpr)
+                   .map(init -> (CastExpr) init)
+                   .ifPresent(cast -> {
+                       String ct = cast.getType().asString().replaceAll("<.*>", "").trim();
+                       if (!ct.isEmpty() && Character.isUpperCase(ct.charAt(0))) {
+                           castVarToType.put(var.getNameAsString(), ct);
+                       }
+                   }));
+
+        // Store repoType → [methodName,argCount] for calls like repo.getPayeeDetails(a,b)
+        // Stored as: "TPIBFTPayeeRepo|getPayeeDetails|2"  (simple string for MethodMetadata)
+        // TestOrchestrator resolves parameter types from the interface source
+        List<String> repoMethodCallTokens = method.findAll(MethodCallExpr.class).stream()
+                .filter(call -> call.getScope()
+                        .filter(s -> s instanceof NameExpr)
+                        .map(s -> castVarToType.containsKey(((NameExpr) s).getNameAsString()))
+                        .orElse(false))
+                .map(call -> {
+                    String varName = ((NameExpr) call.getScope().get()).getNameAsString();
+                    return castVarToType.get(varName) + "|" + call.getNameAsString()
+                           + "|" + call.getArguments().size();
+                })
                 .distinct()
                 .toList();
 
@@ -294,7 +325,7 @@ public class JavaClassParser {
                 false,
                 superCalls, staticCallClasses, helperCalls,
                 hasConditionals, hasNumericComparisons, hasTryCatch,
-                conditionScenarios, constructedTypes, castToTypes
+                conditionScenarios, constructedTypes, castToTypes, repoMethodCallTokens
         );
     }
 

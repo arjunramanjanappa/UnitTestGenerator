@@ -343,7 +343,7 @@ public class TestOrchestrator {
                     Modifier.isPublic(mod), Modifier.isProtected(mod),
                     false, Modifier.isAbstract(mod), Modifier.isFinal(mod),
                     false, false,
-                    List.of(), List.of(), List.of(), false, false, false, List.of(), List.of(), List.of()
+                    List.of(), List.of(), List.of(), false, false, false, List.of(), List.of(), List.of(), List.of()
             ));
         }
 
@@ -494,18 +494,73 @@ public class TestOrchestrator {
                                             .anyMatch(a -> a.equals("Repository"));
                                     if (!isRepo) return;
 
-                                    // Find the service-locator method name from this method's calls
+                                    // Service-locator method name
                                     String locator = mm.helperMethodCalls().stream()
                                             .filter(call -> !call.equals(mm.name()))
                                             .findFirst()
                                             .orElse("makeDAO");
+
+                                    // Resolve method calls on this repo from the tokens
+                                    // Token format: "RepoType|methodName|argCount"
+                                    List<com.testgen.parser.ServiceLocatorAccess.RepoCall> repoCalls =
+                                            resolveRepoCalls(typeName, mm, cls);
+
                                     result.add(new com.testgen.parser.ServiceLocatorAccess(
                                             typeName, locator,
-                                            com.testgen.parser.ServiceLocatorAccess.toFieldName(typeName)));
+                                            com.testgen.parser.ServiceLocatorAccess.toFieldName(typeName),
+                                            repoCalls));
                                 });
                     } catch (Exception ignored) {}
                 }));
         return result;
+    }
+
+    /**
+     * For each repoMethodCallToken of format "RepoType|methodName|argCount",
+     * looks up the actual method signature from the interface's source to get
+     * parameter types and return type for accurate when(...).thenReturn(...) generation.
+     */
+    private List<com.testgen.parser.ServiceLocatorAccess.RepoCall> resolveRepoCalls(
+            String repoType,
+            MethodMetadata mm,
+            com.github.javaparser.ast.body.ClassOrInterfaceDeclaration ifaceCls) {
+
+        if (mm.repoMethodCallTokens() == null) return List.of();
+
+        List<com.testgen.parser.ServiceLocatorAccess.RepoCall> calls = new ArrayList<>();
+
+        for (String token : mm.repoMethodCallTokens()) {
+            String[] parts = token.split("\\|");
+            if (parts.length < 3 || !parts[0].equals(repoType)) continue;
+            String methodName = parts[1];
+            int argCount      = Integer.parseInt(parts[2]);
+
+            // Look up actual method in the interface to get param + return types
+            ifaceCls.getMethods().stream()
+                    .filter(md -> md.getNameAsString().equals(methodName))
+                    .filter(md -> md.getParameters().size() == argCount)
+                    .findFirst()
+                    .ifPresentOrElse(
+                        md -> {
+                            List<MethodMetadata.ParameterMetadata> params =
+                                    md.getParameters().stream()
+                                      .map(p -> new MethodMetadata.ParameterMetadata(
+                                              p.getTypeAsString(), p.getNameAsString()))
+                                      .toList();
+                            calls.add(new com.testgen.parser.ServiceLocatorAccess.RepoCall(
+                                    methodName, params, md.getTypeAsString()));
+                        },
+                        () -> {
+                            // Method not found in interface — use any() placeholders
+                            List<MethodMetadata.ParameterMetadata> params =
+                                    java.util.Collections.nCopies(argCount,
+                                            new MethodMetadata.ParameterMetadata("Object", "arg"));
+                            calls.add(new com.testgen.parser.ServiceLocatorAccess.RepoCall(
+                                    methodName, params, "Object"));
+                        }
+                    );
+        }
+        return calls;
     }
 
     // ── Param type registry (typed inline init for non-TestData types) ──────

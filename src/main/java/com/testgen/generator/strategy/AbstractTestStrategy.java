@@ -675,11 +675,46 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         StringBuilder sb = new StringBuilder();
         sb.append(i(indent)).append("// Service-locator stubs — return mocked @Repository instead of real DAO\n");
         for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
+            // Stub makeDAO to return the mock repo
             sb.append(i(indent))
               .append("lenient().doReturn(").append(sla.fieldName()).append(").when(")
               .append(subject).append(").").append(sla.locatorMethod()).append("(any());\n");
+
+            // Stub each detected method call on the repo — prevents NPE and covers DB call lines
+            for (com.testgen.parser.ServiceLocatorAccess.RepoCall call : sla.repoCalls()) {
+                String matchers = call.params().stream()
+                        .map(p -> mockitoMatcher(p.type()))
+                        .collect(Collectors.joining(", "));
+                String returnVal = repoReturnValue(call.returnType(), m);
+                sb.append(i(indent))
+                  .append("lenient().when(").append(sla.fieldName()).append(".")
+                  .append(call.methodName()).append("(").append(matchers).append("))")
+                  .append(".thenReturn(").append(returnVal).append(");\n");
+            }
         }
         return sb.toString();
+    }
+
+    /** Returns a sensible default return value for a repository method call. */
+    private String repoReturnValue(String returnType, ClassMetadata m) {
+        if (returnType == null) return "null";
+        String raw = returnType.replaceAll("<.*>", "").trim();
+        return switch (raw) {
+            case "List"       -> "new java.util.ArrayList<>()";
+            case "Set"        -> "new java.util.HashSet<>()";
+            case "Collection" -> "new java.util.ArrayList<>()";
+            case "Optional"   -> "java.util.Optional.empty()";
+            case "void"       -> ""; // handled by doNothing
+            case "long", "Long", "int", "Integer" -> "0";
+            case "boolean", "Boolean" -> "false";
+            default -> {
+                // If it's a known project type, use its TestData builder
+                if (m.concreteClassNames() != null && m.concreteClassNames().contains(raw)) {
+                    yield raw + "TestData.buildValid" + raw + "()";
+                }
+                yield "null";
+            }
+        };
     }
 
     // ── Pattern D: internal helper method stubs ──────────────────────────────
@@ -1356,19 +1391,24 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      */
     private void buildVerifyHints(MethodMetadata mm, ClassMetadata m,
                                    StringBuilder sb, int indent) {
-        // Service-locator repo verify hints — covers repo.save(entity)
+        // Service-locator repo verify hints — actual method names from detection
         if (m.hasServiceLocatorRepos()) {
             sb.append(i(indent)).append("// Verify service-locator @Repository interactions:\n");
-            String entityHint = m.hasEntityConstructions()
-                    ? m.entityConstructions().iterator().next() + ".class"
-                    : "...";
             for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
-                sb.append(i(indent))
-                  .append("// verify(").append(sla.fieldName()).append(").save(any(")
-                  .append(entityHint).append("));\n");
-                sb.append(i(indent))
-                  .append("// verify(").append(sla.fieldName())
-                  .append(").findById(any()); // if applicable\n");
+                if (sla.repoCalls().isEmpty()) {
+                    // Fallback when no specific calls detected
+                    sb.append(i(indent))
+                      .append("// verify(").append(sla.fieldName()).append(").save(any());\n");
+                } else {
+                    for (com.testgen.parser.ServiceLocatorAccess.RepoCall call : sla.repoCalls()) {
+                        String matchers = call.params().stream()
+                                .map(p -> mockitoMatcher(p.type()))
+                                .collect(Collectors.joining(", "));
+                        sb.append(i(indent))
+                          .append("// verify(").append(sla.fieldName()).append(").")
+                          .append(call.methodName()).append("(").append(matchers).append(");\n");
+                    }
+                }
             }
         }
         if (!mm.parameters().isEmpty()) {

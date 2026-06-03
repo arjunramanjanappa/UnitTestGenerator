@@ -23,7 +23,8 @@ public record MethodMetadata(
         boolean hasTryCatch,                    // try/catch blocks
         List<ConditionScenario> conditionScenarios, // detected branch conditions with scenarios
         List<String> constructedTypes,          // types instantiated via 'new X()' in body
-        List<String> castToTypes                // types used in cast expressions — potential service-locator repos
+        List<String> castToTypes,               // types used in cast expressions — potential service-locator repos
+        List<String> repoMethodCallTokens      // "RepoType|methodName|argCount" for calls on cast vars
 ) {
     public boolean hasReturnValue() {
         return !"void".equals(returnType);
