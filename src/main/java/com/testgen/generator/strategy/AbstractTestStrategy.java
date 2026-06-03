@@ -394,12 +394,47 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         if (m.hasParentChain()) {
             for (int level = 0; level < m.parentChain().size(); level++) {
                 ClassMetadata parent = m.parentChain().get(level);
+                boolean samePackage = m.packageName().equals(parent.packageName());
+
                 List<MethodMetadata> inheritedMethods = parent.methods().stream()
                         .filter(MethodMetadata::isTestable)
                         .filter(mm -> !mm.isFinal())                          // cannot be stubbed
                         .filter(mm -> !overriddenNames.contains(mm.name()))   // already in Category A
                         .filter(mm -> !ownMethodNames.contains(mm.name()))    // ClassA has its own version (overload)
+                        // Protected methods from a DIFFERENT package parent are inaccessible
+                        // from the test class (not same package, not subclass of parent) —
+                        // calling subject.protectedMethod() won't compile from a different package
+                        .filter(mm -> mm.isPublic() || samePackage)
                         .toList();
+
+                // Collect protected-only methods that were skipped — emit as comments
+                List<MethodMetadata> inaccessibleProtected = samePackage
+                        ? List.of()
+                        : parent.methods().stream()
+                            .filter(MethodMetadata::isTestable)
+                            .filter(mm -> mm.isProtected() && !mm.isPublic())
+                            .filter(mm -> !mm.isFinal())
+                            .filter(mm -> !overriddenNames.contains(mm.name()))
+                            .filter(mm -> !ownMethodNames.contains(mm.name()))
+                            .toList();
+
+                if (!inaccessibleProtected.isEmpty()) {
+                    sb.append(i(indent))
+                      .append("// NOTE: protected methods from ").append(parent.className())
+                      .append(" (different package) cannot be stubbed directly.\n");
+                    sb.append(i(indent))
+                      .append("// If needed, move the test to ").append(parent.packageName())
+                      .append(" or widen the method's access to public.\n");
+                    for (MethodMetadata mm : inaccessibleProtected) {
+                        String matchers = mm.parameters().stream()
+                                .map(p -> mockitoMatcher(p.type()))
+                                .collect(Collectors.joining(", "));
+                        sb.append(i(indent)).append("// SKIPPED: lenient().")
+                          .append(mm.hasReturnValue() ? "doReturn(...)" : "doNothing()")
+                          .append(".when(subject).").append(mm.name()).append("(").append(matchers)
+                          .append("); // protected — inaccessible from ").append(m.packageName()).append("\n");
+                    }
+                }
 
                 if (!inheritedMethods.isEmpty()) {
                     sb.append(i(indent))
