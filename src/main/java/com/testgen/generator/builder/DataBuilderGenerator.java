@@ -5,6 +5,7 @@ import com.testgen.parser.ClassMetadata;
 import com.testgen.parser.ConditionScenario;
 import com.testgen.parser.FieldMetadata;
 import com.testgen.parser.MethodMetadata;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -163,7 +164,7 @@ public class DataBuilderGenerator {
             sb.append(I3).append(".build();\n");
         } else {
             sb.append(I2).append(m.className()).append(" obj = new ").append(m.className()).append("();\n");
-            for (FieldMetadata f : nonStaticFields(m)) {
+            for (FieldMetadata f : settableFields(m)) {   // skip fields with no setter
                 String setter = "set" + setterSuffix(f);
                 sb.append(I2).append("obj.").append(setter).append("(").append(validValue(f)).append(");\n");
             }
@@ -193,7 +194,7 @@ public class DataBuilderGenerator {
             sb.append(I3).append(".build();\n");
         } else {
             sb.append(I2).append(m.className()).append(" obj = new ").append(m.className()).append("();\n");
-            for (FieldMetadata f : nonStaticFields(m)) {
+            for (FieldMetadata f : settableFields(m)) {   // skip fields with no setter
                 sb.append(I2).append("obj.").append("set").append(setterSuffix(f))
                   .append("(").append(invalidValue(f)).append(");\n");
             }
@@ -223,7 +224,7 @@ public class DataBuilderGenerator {
             sb.append(I3).append(".build();\n");
         } else {
             sb.append(I2).append(m.className()).append(" obj = new ").append(m.className()).append("();\n");
-            for (FieldMetadata f : nonStaticFields(m)) {
+            for (FieldMetadata f : settableFields(m)) {   // skip fields with no setter
                 sb.append(I2).append("obj.").append("set").append(setterSuffix(f))
                   .append("(").append(boundaryValue(f)).append(");\n");
             }
@@ -533,6 +534,37 @@ public class DataBuilderGenerator {
                 .filter(f -> !f.annotations().contains("Autowired"))
                 .filter(f -> !f.isApplicationContext())
                 .filter(f -> !f.isValue())
+                .toList();
+    }
+
+    /**
+     * Returns fields that are safe to set via a setter in the TestData.
+     *
+     * For Lombok classes (@Data / @Getter+@Setter / @Builder):
+     *   All fields are included — Lombok generates setters automatically.
+     *
+     * For plain classes:
+     *   Only fields with an explicitly declared setter in the class are included.
+     *   Fields like 'private String fieldName' with no setXxx() method are skipped
+     *   to prevent "cannot resolve symbol setFieldName" compile errors.
+     */
+    private List<FieldMetadata> settableFields(ClassMetadata m) {
+        List<FieldMetadata> candidates = nonStaticFields(m);
+
+        // Lombok generates all setters — include everything
+        if (m.hasLombok()) return candidates;
+
+        // Build set of explicitly declared setter names in the class
+        Set<String> declaredSetters = m.methods().stream()
+                .filter(mm -> mm.name().startsWith("set") && !mm.parameters().isEmpty())
+                .map(MethodMetadata::name)
+                .collect(Collectors.toSet());
+
+        return candidates.stream()
+                .filter(f -> {
+                    String expectedSetter = "set" + setterSuffix(f);
+                    return declaredSetters.contains(expectedSetter);
+                })
                 .toList();
     }
 
