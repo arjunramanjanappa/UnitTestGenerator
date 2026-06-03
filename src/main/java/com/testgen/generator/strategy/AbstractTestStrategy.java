@@ -1096,18 +1096,24 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent + 1)).append("// Pattern H — exception flow: assert the FINAL thrown exception\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
-        // Identify the first non-repository mock to throw from
-        String triggerMock = m.mockCandidates().stream()
-                .filter(f -> !f.simpleType().endsWith("Repository") && !f.isApplicationContext())
-                .map(FieldMetadata::name)
-                .findFirst()
-                .orElse("<mockDep>");
-        sb.append(i(indent + 1))
-          .append("doThrow(new ").append(exType).append("(\"test\"))")
-          .append(".when(").append(triggerMock).append(").").append(mm.name()).append("(")
-          .append(mm.parameters().stream().map(p -> mockitoMatcher(p.type()))
-                  .collect(Collectors.joining(", ")))
-          .append("); // TODO: identify correct trigger\n");
+        // The doThrow setup cannot be auto-generated because the triggering dependency
+        // and its method cannot be reliably inferred from static analysis alone.
+        // Uncomment ONE of the stubs below and replace the method name:
+        sb.append(i(indent + 1)).append("// TODO: configure a mock dep to throw ")
+          .append(exType).append(" before calling subject.").append(mm.name()).append("()\n");
+
+        // List available mock deps as hints for the developer
+        List<String> availableMocks = new ArrayList<>();
+        m.mockCandidates().stream()
+                .filter(f -> !f.isApplicationContext())
+                .forEach(f -> availableMocks.add(f.name() + " (" + f.simpleType() + ")"));
+        m.serviceLocatorRepos().forEach(sla -> availableMocks.add(sla.fieldName() + " (" + sla.repoType() + ")"));
+
+        if (!availableMocks.isEmpty()) {
+            sb.append(i(indent + 1)).append("// Available mocks: ").append(String.join(", ", availableMocks)).append("\n");
+        }
+        sb.append(i(indent + 1)).append("// Example: doThrow(new ").append(exType)
+          .append("(\"msg\")).when(<mockFromAbove>).<itsMethod>(any());\n");
 
         sb.append(i(indent + 1)).append("// Assert the final exception (may be wrapped by try/catch re-throw)\n");
         if (mm.isProtected()) {
@@ -1379,12 +1385,20 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent + 1)).append("// given\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
-        // Specific doThrow stub wired to the exact exception type
+        // Configure a mock to throw the exception — pick the relevant mock and its method
         sb.append(i(indent + 1))
-          .append("// Arrange: configure a mock dependency to throw ").append(exType).append("\n");
+          .append("// Arrange: configure a mock to throw ").append(exType).append("\n");
+        // List available mocks as hints
+        List<String> mockHints = new ArrayList<>();
+        m.mockCandidates().stream().filter(f -> !f.isApplicationContext())
+                .forEach(f -> mockHints.add(f.name()));
+        m.serviceLocatorRepos().forEach(sla -> mockHints.add(sla.fieldName()));
+        if (!mockHints.isEmpty()) {
+            sb.append(i(indent + 1)).append("// Available mocks: ").append(String.join(", ", mockHints)).append("\n");
+        }
         sb.append(i(indent + 1))
-          .append("// doThrow(new ").append(exType).append("(\"test\"))")
-          .append(".when(<mockDep>).<methodThatTriggers>(any()); // TODO: identify the triggering mock call\n");
+          .append("// doThrow(new ").append(exType).append("(\"msg\"))")
+          .append(".when(/* pick a mock */)./* itsMethod */(any());\n");
 
         sb.append(i(indent + 1)).append("// when / then\n");
         String params = paramNames(mm);
