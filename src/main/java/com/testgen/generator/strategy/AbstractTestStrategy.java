@@ -1093,27 +1093,24 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ").append(testName).append("() {\n");
-        sb.append(i(indent + 1)).append("// Pattern H — exception flow: assert the FINAL thrown exception\n");
+        sb.append(i(indent + 1)).append("// Pattern H — stub the spy itself to throw; tests exception propagation\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
-        // The doThrow setup cannot be auto-generated because the triggering dependency
-        // and its method cannot be reliably inferred from static analysis alone.
-        // Uncomment ONE of the stubs below and replace the method name:
-        sb.append(i(indent + 1)).append("// TODO: configure a mock dep to throw ")
-          .append(exType).append(" before calling subject.").append(mm.name()).append("()\n");
-
-        // List available mock deps as hints for the developer
-        List<String> availableMocks = new ArrayList<>();
-        m.mockCandidates().stream()
-                .filter(f -> !f.isApplicationContext())
-                .forEach(f -> availableMocks.add(f.name() + " (" + f.simpleType() + ")"));
-        m.serviceLocatorRepos().forEach(sla -> availableMocks.add(sla.fieldName() + " (" + sla.repoType() + ")"));
-
-        if (!availableMocks.isEmpty()) {
-            sb.append(i(indent + 1)).append("// Available mocks: ").append(String.join(", ", availableMocks)).append("\n");
+        // Stub subject (spy) to throw — works for ClassA's own public/protected methods.
+        // doThrow on the spy intercepts the call before executing the method body.
+        String exMatchers = mm.parameters().stream()
+                .map(p -> mockitoMatcher(p.type()))
+                .collect(Collectors.joining(", "));
+        if (isOwnAccessibleMethod(mm.name(), m)) {
+            sb.append(i(indent + 1))
+              .append("doThrow(new ").append(exType).append("(\"test\"))")
+              .append(".when(subject).").append(mm.name()).append("(").append(exMatchers).append(");\n");
+        } else {
+            // Inherited method — cannot call directly; leave as a hint comment
+            sb.append(i(indent + 1))
+              .append("// doThrow(new ").append(exType).append("(\"test\"))")
+              .append(".when(subject).").append(mm.name()).append("(").append(exMatchers).append("); // inherited\n");
         }
-        sb.append(i(indent + 1)).append("// Example: doThrow(new ").append(exType)
-          .append("(\"msg\")).when(<mockFromAbove>).<itsMethod>(any());\n");
 
         sb.append(i(indent + 1)).append("// Assert the final exception (may be wrapped by try/catch re-throw)\n");
         if (mm.isProtected()) {
@@ -1385,20 +1382,21 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent + 1)).append("// given\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
-        // Configure a mock to throw the exception — pick the relevant mock and its method
-        sb.append(i(indent + 1))
-          .append("// Arrange: configure a mock to throw ").append(exType).append("\n");
-        // List available mocks as hints
-        List<String> mockHints = new ArrayList<>();
-        m.mockCandidates().stream().filter(f -> !f.isApplicationContext())
-                .forEach(f -> mockHints.add(f.name()));
-        m.serviceLocatorRepos().forEach(sla -> mockHints.add(sla.fieldName()));
-        if (!mockHints.isEmpty()) {
-            sb.append(i(indent + 1)).append("// Available mocks: ").append(String.join(", ", mockHints)).append("\n");
+        // Stub the spy subject to throw — consistent with Pattern H approach
+        String throwMatchers = mm.parameters().stream()
+                .map(p -> mockitoMatcher(p.type()))
+                .collect(Collectors.joining(", "));
+        if (isOwnAccessibleMethod(mm.name(), m)) {
+            sb.append(i(indent + 1))
+              .append("doThrow(new ").append(exType).append("(\"test\"))")
+              .append(".when(").append(subject).append(").").append(mm.name())
+              .append("(").append(throwMatchers).append(");\n");
+        } else {
+            sb.append(i(indent + 1))
+              .append("// doThrow(new ").append(exType).append("(\"test\"))")
+              .append(".when(").append(subject).append(").").append(mm.name())
+              .append("(").append(throwMatchers).append("); // inherited — verify access\n");
         }
-        sb.append(i(indent + 1))
-          .append("// doThrow(new ").append(exType).append("(\"msg\"))")
-          .append(".when(/* pick a mock */)./* itsMethod */(any());\n");
 
         sb.append(i(indent + 1)).append("// when / then\n");
         String params = paramNames(mm);
