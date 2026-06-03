@@ -436,58 +436,47 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .flatMap(mm -> mm.helperMethodCalls().stream())
                 .collect(Collectors.toSet());
 
+        // ── B) Inherited non-overridden methods — emit as COMMENTS only ────────
+        // Generic rule: inherited parent methods are NEVER emitted as active stubs.
+        //
+        // Reason: access modifier (protected) and package differences cannot be
+        // reliably determined at generation time for all project structures.
+        // Calling subject.protectedMethod() from the test class compiles only when
+        // the test is in the SAME package as the declaring class — which is not
+        // guaranteed when the parent is in a framework or base package.
+        //
+        // Category A (@Override methods) remain active — those are ClassA's own
+        // methods, always accessible from ClassA's test package.
+        //
+        // Uncomment any stub below if the real method causes issues during tests.
         if (m.hasParentChain()) {
             for (int level = 0; level < m.parentChain().size(); level++) {
                 ClassMetadata parent = m.parentChain().get(level);
-                boolean samePackage = m.packageName().equals(parent.packageName());
 
                 List<MethodMetadata> inheritedMethods = parent.methods().stream()
                         .filter(MethodMetadata::isTestable)
-                        .filter(mm -> !mm.isFinal())                          // cannot be stubbed
-                        .filter(mm -> !overriddenNames.contains(mm.name()))   // already in Category A
-                        .filter(mm -> !ownMethodNames.contains(mm.name()))    // ClassA has its own version (overload)
-                        .filter(mm -> calledInClassA.contains(mm.name()))     // only stub what ClassA actually calls
-                        .filter(mm -> mm.isPublic() || samePackage)           // protected: same-package only
+                        .filter(mm -> !mm.isFinal())
+                        .filter(mm -> !overriddenNames.contains(mm.name()))
+                        .filter(mm -> !ownMethodNames.contains(mm.name()))
+                        .filter(mm -> calledInClassA.contains(mm.name()))
                         .toList();
-
-                // Protected methods that ClassA DOES call but can't be stubbed (different package)
-                List<MethodMetadata> inaccessibleProtected = samePackage
-                        ? List.of()
-                        : parent.methods().stream()
-                            .filter(MethodMetadata::isTestable)
-                            .filter(mm -> mm.isProtected() && !mm.isPublic())
-                            .filter(mm -> !mm.isFinal())
-                            .filter(mm -> !overriddenNames.contains(mm.name()))
-                            .filter(mm -> !ownMethodNames.contains(mm.name()))
-                            .filter(mm -> calledInClassA.contains(mm.name())) // only report if ClassA calls it
-                            .toList();
-
-                if (!inaccessibleProtected.isEmpty()) {
-                    sb.append(i(indent))
-                      .append("// NOTE: protected methods from ").append(parent.className())
-                      .append(" (different package) cannot be stubbed directly.\n");
-                    sb.append(i(indent))
-                      .append("// If needed, move the test to ").append(parent.packageName())
-                      .append(" or widen the method's access to public.\n");
-                    for (MethodMetadata mm : inaccessibleProtected) {
-                        String matchers = mm.parameters().stream()
-                                .map(p -> mockitoMatcher(p.type()))
-                                .collect(Collectors.joining(", "));
-                        sb.append(i(indent)).append("// SKIPPED: lenient().")
-                          .append(mm.hasReturnValue() ? "doReturn(...)" : "doNothing()")
-                          .append(".when(subject).").append(mm.name()).append("(").append(matchers)
-                          .append("); // protected — inaccessible from ").append(m.packageName()).append("\n");
-                    }
-                }
 
                 if (!inheritedMethods.isEmpty()) {
                     sb.append(i(indent))
                       .append("// B) Inherited non-overridden methods from ").append(parent.className())
-                      .append(" — stub ALL on spy to prevent real ").append(parent.className()).append(" execution\n");
+                      .append(" — uncomment if real parent execution causes issues:\n");
                     for (MethodMetadata mm : inheritedMethods) {
-                        sb.append(emitSpyStub(mm, "subject", indent,
-                                " // inherited from " + parent.className(), m));
-                        overriddenNames.add(mm.name()); // dedup across ancestor levels
+                        String matchers = mm.parameters().stream()
+                                .map(p -> mockitoMatcher(p.type()))
+                                .collect(Collectors.joining(", "));
+                        // Always a comment — never active — avoids protected-access compile errors
+                        sb.append(i(indent)).append("// lenient().")
+                          .append(mm.hasReturnValue()
+                                ? "doReturn(" + typedReturnValue(mm.returnType(), m) + ")"
+                                : "doNothing()")
+                          .append(".when(subject).").append(mm.name()).append("(").append(matchers)
+                          .append("); // inherited from ").append(parent.className()).append("\n");
+                        overriddenNames.add(mm.name());
                     }
                 }
             }
