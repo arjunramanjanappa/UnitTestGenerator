@@ -384,13 +384,21 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         }
 
         // ── B) Inherited non-overridden methods — stub to prevent real ClassB execution ──
+        // Also skip parent methods where ClassA has its own method with the same name
+        // (overloaded — different params, no @Override). ClassA's dispatch routes to its
+        // own version; the parent's version with a different signature won't be invoked.
+        Set<String> ownMethodNames = m.methods().stream()
+                .map(MethodMetadata::name)
+                .collect(Collectors.toSet());
+
         if (m.hasParentChain()) {
             for (int level = 0; level < m.parentChain().size(); level++) {
                 ClassMetadata parent = m.parentChain().get(level);
                 List<MethodMetadata> inheritedMethods = parent.methods().stream()
                         .filter(MethodMetadata::isTestable)
-                        .filter(mm -> !mm.isFinal()) // final methods cannot be stubbed
-                        .filter(mm -> !overriddenNames.contains(mm.name())) // already stubbed above
+                        .filter(mm -> !mm.isFinal())                          // cannot be stubbed
+                        .filter(mm -> !overriddenNames.contains(mm.name()))   // already in Category A
+                        .filter(mm -> !ownMethodNames.contains(mm.name()))    // ClassA has its own version (overload)
                         .toList();
 
                 if (!inheritedMethods.isEmpty()) {
