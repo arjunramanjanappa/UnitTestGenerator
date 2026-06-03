@@ -431,7 +431,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     private String emitSpyStub(MethodMetadata mm, String target, int indent,
                                 String comment, ClassMetadata m) {
         String matchers = mm.parameters().stream()
-                .map(p -> "any(" + p.type().replaceAll("<.*>", "").trim() + ".class)")
+                .map(p -> mockitoMatcher(p.type()))
                 .collect(Collectors.joining(", "));
         if (mm.hasReturnValue()) {
             // Use typed return value when class metadata available (concreteClassNames / paramTypeRegistry)
@@ -622,7 +622,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
               .findFirst()
               .ifPresent(mm -> {
                   String matchers = mm.parameters().stream()
-                          .map(p -> "any(" + p.type().replaceAll("<.*>", "").trim() + ".class)")
+                          .map(p -> mockitoMatcher(p.type()))
                           .collect(Collectors.joining(", "));
                   if (mm.hasReturnValue()) {
                       sb.append(i(indent))
@@ -836,7 +836,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent + 1))
           .append("doThrow(new ").append(exType).append("(\"test\"))")
           .append(".when(").append(triggerMock).append(").").append(mm.name()).append("(")
-          .append(mm.parameters().stream().map(p -> "any(" + p.type().replaceAll("<.*>", "").trim() + ".class)")
+          .append(mm.parameters().stream().map(p -> mockitoMatcher(p.type()))
                   .collect(Collectors.joining(", ")))
           .append("); // TODO: identify correct trigger\n");
 
@@ -1208,7 +1208,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         for (MethodMetadata.ParameterMetadata p : mm.parameters()) {
             String rawType = p.type().replaceAll("<.*>", "").trim();
             boolean isDomain = defaultValue(p.type()).startsWith("null");
-            String matcher = isDomain ? "any(" + rawType + ".class)" : p.name();
+            String matcher = isDomain ? mockitoMatcher(rawType) : p.name();
             sb.append(i(indent))
               .append("// verify(<mockDep>).<method>(").append(matcher).append(");\n");
         }
@@ -1412,6 +1412,39 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return mm.parameters().stream()
                 .map(MethodMetadata.ParameterMetadata::name)
                 .collect(Collectors.joining(", "));
+    }
+
+    // ── Mockito matcher helpers ──────────────────────────────────────────────
+
+    /**
+     * Returns the correct Mockito ArgumentMatcher for a given parameter type.
+     *
+     * Primitives require specific matchers — any(int.class) does NOT compile:
+     *   int/Integer   → anyInt()
+     *   long/Long     → anyLong()
+     *   double/Double → anyDouble()
+     *   float/Float   → anyFloat()
+     *   boolean/Bool  → anyBoolean()
+     *   byte/Byte     → anyByte()
+     *   short/Short   → anyShort()
+     *   char/Char     → anyChar()
+     *   String        → anyString()
+     *   Object/other  → any(TypeName.class)
+     */
+    protected String mockitoMatcher(String rawType) {
+        String type = rawType.replaceAll("<.*>", "").trim();
+        return switch (type) {
+            case "int",     "Integer"   -> "anyInt()";
+            case "long",    "Long"      -> "anyLong()";
+            case "double",  "Double"    -> "anyDouble()";
+            case "float",   "Float"     -> "anyFloat()";
+            case "boolean", "Boolean"   -> "anyBoolean()";
+            case "byte",    "Byte"      -> "anyByte()";
+            case "short",   "Short"     -> "anyShort()";
+            case "char",    "Character" -> "anyChar()";
+            case "String"               -> "anyString()";
+            default                     -> "any(" + type + ".class)";
+        };
     }
 
     protected boolean isPrimitive(String type) {
