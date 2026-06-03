@@ -140,11 +140,18 @@ public class TestOrchestrator {
 
                 // Also generate TestData for every domain type referenced in method params / return types
                 // so the generated tests compile without missing XxxTestData references
-                generateDependentTestData(meta, tests, javaFiles);
+                generateDependentTestData(meta, tests, javaFiles, fileIndex);
 
                 // Generate TestData for @Repository method return entity types
                 // (TPIBCasCounter returned by findByInternalId etc.) to cover all code paths
                 generateRepoReturnTestData(meta, tests, javaFiles, fileIndex);
+
+                // Cascade: generate TestData for domain object FIELD types within already-generated
+                // TestData classes (e.g. FTBaseVO has CoolingPeriodVO field →
+                // CoolingPeriodVOTestData must be generated so FTBaseVOTestData compiles)
+                Set<String> cascadeGenerated = new HashSet<>();
+                cascadeGenerated.add(meta.className()); // don't re-generate the main class
+                generateFieldTypeTestData(meta, tests, fileIndex, cascadeGenerated);
 
                 for (GeneratedTest test : tests) {
                     if (dryRun) {
@@ -393,6 +400,13 @@ public class TestOrchestrator {
     private void generateDependentTestData(ClassMetadata meta,
                                             List<GeneratedTest> tests,
                                             List<Path> alreadyScanned) {
+        generateDependentTestData(meta, tests, alreadyScanned, null);
+    }
+
+    private void generateDependentTestData(ClassMetadata meta,
+                                            List<GeneratedTest> tests,
+                                            List<Path> alreadyScanned,
+                                            Map<String, Path> fileIndexForCascade) {
         if (meta.paramTypeRegistry() == null || meta.paramTypeRegistry().isEmpty()) return;
 
         // Build a set of class names already covered by the main scan
@@ -440,6 +454,14 @@ public class TestOrchestrator {
             addedTestDataFiles.add(testDataFileName);
             log.info("Generated companion TestData for {} in package {}",
                     depMeta.className(), meta.packageName());
+
+            // Cascade: generate TestData for domain object fields within this dep type
+            if (fileIndexForCascade != null) {
+                Set<String> depVisited = new HashSet<>();
+                depVisited.add(meta.className());
+                depVisited.add(depMeta.className());
+                generateFieldTypeTestData(enriched, tests, fileIndexForCascade, depVisited);
+            }
         }
     }
 
@@ -471,6 +493,59 @@ public class TestOrchestrator {
                     } catch (Exception ignored) {}
                 });
         return entities.isEmpty() ? Set.of() : Collections.unmodifiableSet(entities);
+    }
+
+    // ── Field-type cascade TestData generation ─────────────────────────────
+
+    /**
+     * Cascades TestData generation to domain object types used as FIELDS in the given class.
+     *
+     * Problem: FTBaseVO has 'private CoolingPeriodVO ftcoolingperiod'.
+     * FTBaseVOTestData references CoolingPeriodVOTestData.buildValidCoolingPeriodVO()
+     * but CoolingPeriodVOTestData is never generated → compile error.
+     *
+     * Solution: walk each non-static, non-injected field type; if the type exists in
+     * the source root and is a concrete class, generate its TestData and recurse.
+     * A visited set prevents infinite loops from circular VO references.
+     */
+    private void generateFieldTypeTestData(ClassMetadata meta,
+                                            List<GeneratedTest> tests,
+                                            Map<String, Path> fileIndex,
+                                            Set<String> visited) {
+        for (com.testgen.parser.FieldMetadata f : meta.fields()) {
+            if (f.isStatic() || f.isApplicationContext() || f.isValue()) continue;
+
+            String rawType = f.simpleType();
+            if (rawType.isEmpty() || !Character.isUpperCase(rawType.charAt(0))) continue;
+            if (!visited.add(rawType)) continue; // already processed — prevents circular loops
+
+            // Skip if TestData already queued
+            String testDataFile = rawType + "TestData.java";
+            if (tests.stream().anyMatch(t -> t.fileName().equals(testDataFile))) continue;
+
+            Path srcFile = fileIndex.get(rawType);
+            if (srcFile == null) continue; // external type — can't generate
+
+            classParser.parse(srcFile).ifPresent(parsed -> {
+                // Skip interfaces, abstract classes, Spring components
+                if (parsed.isInterface() || parsed.isAbstract()) return;
+                if (parsed.annotations().stream().anyMatch(a ->
+                        a.equals("Repository") || a.equals("Service") || a.equals("Component"))) return;
+
+                ClassMetadata enriched = classifier.classify(parsed)
+                        .withConcreteClassNames(meta.concreteClassNames())
+                        .withParamTypeRegistry(meta.paramTypeRegistry())
+                        .withPackageName(meta.packageName())   // co-locate with test
+                        .withImports(meta.imports());           // ClassA's FQN authority
+
+                tests.add(dataBuilderGenerator.generate(enriched));
+                log.info("Generated cascade TestData for field type: {} (from {})",
+                        rawType, meta.className());
+
+                // Recurse for this type's own domain object fields
+                generateFieldTypeTestData(enriched, tests, fileIndex, visited);
+            });
+        }
     }
 
     // ── Repo return type TestData generation ───────────────────────────────
