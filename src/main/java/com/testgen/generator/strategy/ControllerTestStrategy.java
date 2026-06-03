@@ -32,10 +32,6 @@ public class ControllerTestStrategy extends AbstractTestStrategy {
 
         sb.append("class ").append(cls).append("Test {\n\n");
         sb.append(buildUnitNested(m));
-        sb.append(buildFunctionalNested(m));
-        sb.append(buildWireNested(m,
-                "@Autowired\n" + i(2) + "private MockMvc mockMvc;\n\n"
-                + i(2) + "// subject: " + cls + " wired via full Spring context", 1));
         sb.append("}\n");
         return sb.toString();
     }

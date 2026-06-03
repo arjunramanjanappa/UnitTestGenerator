@@ -125,8 +125,6 @@ public class CamelRouteTestStrategy extends AbstractTestStrategy {
         sb.append(i(1)).append("}\n\n");
 
         sb.append(buildUnitNested(m, routes));
-        sb.append(buildFunctionalNested(m, routes));
-        sb.append(buildCamelWireNested(m));
         sb.append("}\n");
         return sb.toString();
     }

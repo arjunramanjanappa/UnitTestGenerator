@@ -25,9 +25,6 @@ public class ComponentTestStrategy extends AbstractTestStrategy {
         sb.append("\n");
         sb.append("class ").append(cls).append("Test {\n\n");
         sb.append(buildUnitNested(m));
-        sb.append(buildFunctionalNested(m));
-        sb.append(buildWireNested(m,
-                "@Autowired\n" + i(2) + "private " + cls + " subject;", 1));
         sb.append("}\n");
         return sb.toString();
     }
