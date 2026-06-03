@@ -416,6 +416,13 @@ public class TestOrchestrator {
             // Skip if this type will be (or was) processed in the main scan loop
             if (alreadyScannedNames.contains(depMeta.className())) continue;
 
+            // Skip interfaces, abstract classes and @Repository/@Service types —
+            // these cannot be instantiated; they need mock(), not TestData
+            if (depMeta.isInterface() || depMeta.isAbstract()) continue;
+            boolean isSpringComponent = depMeta.annotations().stream()
+                    .anyMatch(a -> a.equals("Repository") || a.equals("Service") || a.equals("Component"));
+            if (isSpringComponent) continue;
+
             // Skip if TestData was already added (e.g. from a previous dep in same class)
             String testDataFileName = depMeta.className() + "TestData.java";
             if (addedTestDataFiles.contains(testDataFileName)) continue;
@@ -517,10 +524,24 @@ public class TestOrchestrator {
                 if (srcFile == null) return; // external type — can't generate
 
                 classParser.parse(srcFile).ifPresent(parsed -> {
+                    // Skip interfaces, abstract classes, and @Repository types —
+                    // these cannot be instantiated with new() or have setters called.
+                    // repoReturnValue() already handles them with mock(Type.class).
+                    if (parsed.isInterface() || parsed.isAbstract()) {
+                        log.debug("Skipping TestData for {}: is interface or abstract", entityType);
+                        return;
+                    }
+                    boolean isRepo = parsed.annotations().stream()
+                            .anyMatch(a -> a.equals("Repository") || a.equals("Component")
+                                       || a.equals("Service"));
+                    if (isRepo) {
+                        log.debug("Skipping TestData for {}: is @Repository/@Component/@Service", entityType);
+                        return;
+                    }
                     ClassMetadata enriched = classifier.classify(parsed)
                             .withConcreteClassNames(meta.concreteClassNames())
-                            .withPackageName(meta.packageName())   // co-locate with test
-                            .withImports(meta.imports());           // use ClassA's FQN authority
+                            .withPackageName(meta.packageName())
+                            .withImports(meta.imports());
                     tests.add(dataBuilderGenerator.generate(enriched));
                     log.info("Generated TestData for repo return type: {} (from {})",
                             entityType, sla.repoType());

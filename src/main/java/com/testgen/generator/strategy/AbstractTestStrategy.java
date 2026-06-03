@@ -786,12 +786,13 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             case "String"     -> "\"testValue\"";
             default -> {
                 if (!raw.isEmpty() && Character.isUpperCase(raw.charAt(0))) {
-                    // If the type is in the project source root, its TestData WILL be generated
-                    // → use buildValidType() for realistic field values and 95% coverage
+                    // concreteClassNames contains ONLY non-interface, non-abstract classes.
+                    // @Repository interfaces are NOT in concreteClassNames — they get mock().
+                    // Plain entity/DTO classes ARE in concreteClassNames — they get TestData.
                     if (m.concreteClassNames() != null && m.concreteClassNames().contains(raw)) {
                         yield raw + "TestData.buildValid" + raw + "()";
                     }
-                    // External type (not in source root) → mock() avoids JPA lifecycle
+                    // Interface, abstract class, @Repository, external type → always mock()
                     yield "mock(" + raw + ".class)";
                 }
                 yield "null";
