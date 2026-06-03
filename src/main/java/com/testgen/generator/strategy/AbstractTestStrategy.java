@@ -158,6 +158,29 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             collectMethodTypes(m.interfaceDefaultMethods(), usedSimpleNames);
         }
 
+        // Service-locator @Repository mock fields (e.g. @Mock TPIBFTPayeeRepo)
+        if (m.hasServiceLocatorRepos()) {
+            m.serviceLocatorRepos().forEach(sla -> {
+                usedSimpleNames.add(sla.repoType());
+                // Also collect param/return types from repo method calls
+                sla.repoCalls().forEach(call -> {
+                    usedSimpleNames.add(call.returnType());
+                    call.params().forEach(p -> usedSimpleNames.add(p.type()));
+                });
+            });
+        }
+
+        // Static dependency classes (MockedStatic<MasterUtil> — MasterUtil needs import)
+        m.methods().stream()
+                .filter(mm -> mm.staticCallClasses() != null)
+                .flatMap(mm -> mm.staticCallClasses().stream())
+                .forEach(usedSimpleNames::add);
+
+        // @Entity types constructed inline (MockedConstruction<TpibFtPayee>)
+        if (m.hasEntityConstructions()) {
+            usedSimpleNames.addAll(m.entityConstructions());
+        }
+
         // Build FQN → simple-name map from the source file's imports
         Map<String, String> simpleToFqn = new LinkedHashMap<>();
         for (String fqn : m.imports()) {
