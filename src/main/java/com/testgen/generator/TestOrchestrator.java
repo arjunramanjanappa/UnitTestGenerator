@@ -129,6 +129,9 @@ public class TestOrchestrator {
                 // Detect @Entity types instantiated inline via new X() — use MockedConstruction in tests
                 meta = meta.withEntityConstructions(resolveEntityConstructions(meta, fileIndex));
 
+                // Detect @Repository types obtained via service-locator cast — add mocks + verify stubs
+                meta = meta.withServiceLocatorRepos(resolveServiceLocatorRepos(meta, fileIndex));
+
                 TestStrategy strategy = pickStrategy(meta, xmlRoutes);
                 List<GeneratedTest> tests = new ArrayList<>(strategy.generate(meta, convention));
 
@@ -340,7 +343,7 @@ public class TestOrchestrator {
                     Modifier.isPublic(mod), Modifier.isProtected(mod),
                     false, Modifier.isAbstract(mod), Modifier.isFinal(mod),
                     false, false,
-                    List.of(), List.of(), List.of(), false, false, false, List.of(), List.of()
+                    List.of(), List.of(), List.of(), false, false, false, List.of(), List.of(), List.of()
             ));
         }
 
@@ -355,7 +358,7 @@ public class TestOrchestrator {
                 superName, List.of(),
                 Modifier.isAbstract(clazz.getModifiers()), clazz.isInterface(),
                 false, false, List.of(), null,
-                List.of(), List.of(), Set.of(), Map.of(), Set.of()
+                List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of()
         );
     }
 
@@ -457,6 +460,52 @@ public class TestOrchestrator {
                     } catch (Exception ignored) {}
                 });
         return entities.isEmpty() ? Set.of() : Collections.unmodifiableSet(entities);
+    }
+
+    // ── Service locator repo resolution ────────────────────────────────────
+
+    /**
+     * Finds @Repository types obtained via service-locator casts in method bodies:
+     *   TPIBFTPayeeRepo repo = (TPIBFTPayeeRepo) makeDAO(BEAN_ID)
+     *
+     * For each cast-to type that is @Repository-annotated, records:
+     *  - the repo simple class name
+     *  - the service-locator method name (from the CastExpr's sub-expression)
+     */
+    private List<com.testgen.parser.ServiceLocatorAccess> resolveServiceLocatorRepos(
+            ClassMetadata m, Map<String, Path> fileIndex) {
+
+        List<com.testgen.parser.ServiceLocatorAccess> result = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+
+        m.methods().stream()
+                .filter(mm -> mm.castToTypes() != null)
+                .forEach(mm -> mm.castToTypes().forEach(typeName -> {
+                    if (!seen.add(typeName)) return;
+                    Path srcFile = fileIndex.get(typeName);
+                    if (srcFile == null) return;
+                    try {
+                        com.github.javaparser.ast.CompilationUnit cu =
+                                com.github.javaparser.StaticJavaParser.parse(srcFile);
+                        cu.findFirst(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.class)
+                                .ifPresent(cls -> {
+                                    boolean isRepo = cls.getAnnotations().stream()
+                                            .map(a -> a.getNameAsString())
+                                            .anyMatch(a -> a.equals("Repository"));
+                                    if (!isRepo) return;
+
+                                    // Find the service-locator method name from this method's calls
+                                    String locator = mm.helperMethodCalls().stream()
+                                            .filter(call -> !call.equals(mm.name()))
+                                            .findFirst()
+                                            .orElse("makeDAO");
+                                    result.add(new com.testgen.parser.ServiceLocatorAccess(
+                                            typeName, locator,
+                                            com.testgen.parser.ServiceLocatorAccess.toFieldName(typeName)));
+                                });
+                    } catch (Exception ignored) {}
+                }));
+        return result;
     }
 
     // ── Param type registry (typed inline init for non-TestData types) ──────

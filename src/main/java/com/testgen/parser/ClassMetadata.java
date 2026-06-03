@@ -27,7 +27,8 @@ public record ClassMetadata(
         List<MethodMetadata> interfaceDefaultMethods, // default methods from implemented interfaces
         Set<String> concreteClassNames,              // all non-interface class names in the scanned source root
         Map<String, ClassMetadata> paramTypeRegistry, // parsed metadata for types used in method params
-        Set<String> entityConstructions              // @Entity types instantiated inline via new X()
+        Set<String> entityConstructions,             // @Entity types instantiated inline via new X()
+        List<ServiceLocatorAccess> serviceLocatorRepos // @Repository types obtained via service locator cast
 ) {
     public String fullClassName() {
         return packageName.isEmpty() ? className : packageName + "." + className;
@@ -89,53 +90,65 @@ public record ClassMetadata(
         return new ClassMetadata(className, packageName, sourceFilePath, type,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions);
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos);
     }
 
     public ClassMetadata withSpringBootVersion(String version) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                version, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions);
+                version, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos);
     }
 
     public ClassMetadata withParentChain(List<ClassMetadata> chain) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, chain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions);
+                springBootVersion, chain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos);
     }
 
     public ClassMetadata withInterfaceDefaultMethods(List<MethodMetadata> defaults) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, defaults, concreteClassNames, paramTypeRegistry, entityConstructions);
+                springBootVersion, parentChain, defaults, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos);
     }
 
     public ClassMetadata withConcreteClassNames(Set<String> names) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, names, paramTypeRegistry, entityConstructions);
+                springBootVersion, parentChain, interfaceDefaultMethods, names, paramTypeRegistry, entityConstructions, serviceLocatorRepos);
     }
 
     public ClassMetadata withParamTypeRegistry(Map<String, ClassMetadata> registry) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, registry, entityConstructions);
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, registry, entityConstructions, serviceLocatorRepos);
     }
 
     public ClassMetadata withEntityConstructions(Set<String> entities) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entities);
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entities, serviceLocatorRepos);
     }
 
     public boolean hasEntityConstructions() {
         return entityConstructions != null && !entityConstructions.isEmpty();
+    }
+
+    public boolean hasServiceLocatorRepos() {
+        return serviceLocatorRepos != null && !serviceLocatorRepos.isEmpty();
+    }
+
+    public ClassMetadata withServiceLocatorRepos(List<ServiceLocatorAccess> repos) {
+        return new ClassMetadata(className, packageName, sourceFilePath, classType,
+                annotations, fields, methods, imports, superClassName, interfaces,
+                isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames,
+                paramTypeRegistry, entityConstructions, repos);
     }
 
     /** Override package — used when placing companion TestData in a different package. */
@@ -143,7 +156,7 @@ public record ClassMetadata(
         return new ClassMetadata(className, pkg, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions);
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos);
     }
 
     /** Override imports — used to supply the owning class's import list for FQN resolution. */
@@ -151,6 +164,6 @@ public record ClassMetadata(
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, newImports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions);
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos);
     }
 }

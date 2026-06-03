@@ -22,7 +22,8 @@ public record MethodMetadata(
         boolean hasNumericComparisons,          // >, <, >=, <=, compareTo
         boolean hasTryCatch,                    // try/catch blocks
         List<ConditionScenario> conditionScenarios, // detected branch conditions with scenarios
-        List<String> constructedTypes           // types instantiated via 'new X()' in body
+        List<String> constructedTypes,          // types instantiated via 'new X()' in body
+        List<String> castToTypes                // types used in cast expressions — potential service-locator repos
 ) {
     public boolean hasReturnValue() {
         return !"void".equals(returnType);

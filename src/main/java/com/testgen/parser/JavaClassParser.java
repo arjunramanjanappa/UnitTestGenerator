@@ -94,7 +94,7 @@ public class JavaClassParser {
                     superClass, interfaces,
                     cls.isAbstract(), false,
                     hasLombok, hasBuilder, genericTypeParams, null,
-                    List.of(), List.of(), Set.of(), Map.of(), Set.of()  // parentChain / ifaceDefaults / concreteNames / paramTypeRegistry / entityConstructions
+                    List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of()  // parentChain / ifaceDefaults / concreteNames / paramTypeRegistry / entityConstructions / serviceLocatorRepos
             ));
 
         } catch (IOException e) {
@@ -275,6 +275,15 @@ public class JavaClassParser {
                 .distinct()
                 .toList();
 
+        // Cast expressions: (SomeType) expr — detects service-locator pattern
+        //   TPIBFTPayeeRepo repo = (TPIBFTPayeeRepo) makeDAO(BEAN_ID)
+        // TestOrchestrator filters to @Repository types
+        List<String> castToTypes = method.findAll(CastExpr.class).stream()
+                .map(cast -> cast.getType().asString().replaceAll("<.*>", "").trim())
+                .filter(name -> !name.isEmpty() && Character.isUpperCase(name.charAt(0)))
+                .distinct()
+                .toList();
+
         return new MethodMetadata(
                 method.getNameAsString(),
                 method.getTypeAsString(),
@@ -285,7 +294,7 @@ public class JavaClassParser {
                 false,
                 superCalls, staticCallClasses, helperCalls,
                 hasConditionals, hasNumericComparisons, hasTryCatch,
-                conditionScenarios, constructedTypes
+                conditionScenarios, constructedTypes, castToTypes
         );
     }
 

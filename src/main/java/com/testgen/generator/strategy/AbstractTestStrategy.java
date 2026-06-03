@@ -239,7 +239,18 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * – Concrete class found in source → @Spy  (calls real methods unless stubbed)
      */
     protected String buildMockDeclarations(ClassMetadata m, int indent) {
-        return buildMockDeclarations(m.mockCandidates(), indent, m.concreteClassNames());
+        StringBuilder sb = new StringBuilder();
+        sb.append(buildMockDeclarations(m.mockCandidates(), indent, m.concreteClassNames()));
+        // Service-locator repos are not @Autowired fields — add @Mock for them explicitly
+        if (m.hasServiceLocatorRepos()) {
+            sb.append(i(indent)).append("// Service-locator @Repository mocks (obtained via makeDAO/factory)\n");
+            for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
+                sb.append(i(indent)).append("@Mock\n");
+                sb.append(i(indent)).append("private ").append(sla.repoType())
+                  .append(" ").append(sla.fieldName()).append(";\n\n");
+            }
+        }
+        return sb.toString();
     }
 
     protected String buildMockDeclarations(List<FieldMetadata> fields, int indent) {
@@ -633,6 +644,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             if (m.hasSuperClass()) {
                 sb.append(buildSuperClassStubs(m, indent + 1));
             }
+            // Stub service-locator calls to return the mocked @Repository
+            if (m.hasServiceLocatorRepos()) {
+                sb.append(buildServiceLocatorStubs(m, subject, indent + 1));
+            }
         }
 
         boolean hasPostConstruct = m.methods().stream()
@@ -643,6 +658,27 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         }
 
         sb.append(i(indent)).append("}\n\n");
+        return sb.toString();
+    }
+
+    // ── Service-locator repo stubs ──────────────────────────────────────────
+
+    /**
+     * Stubs service-locator calls (makeDAO / factory methods) on the spy to return
+     * the mocked @Repository instead of hitting the real service locator at runtime.
+     *
+     *   TPIBFTPayeeRepo repo = (TPIBFTPayeeRepo) makeDAO(BEAN_ID)
+     *   →  lenient().doReturn(tpibFTPayeeRepo).when(subject).makeDAO(any());
+     */
+    protected String buildServiceLocatorStubs(ClassMetadata m, String subject, int indent) {
+        if (!m.hasServiceLocatorRepos()) return "";
+        StringBuilder sb = new StringBuilder();
+        sb.append(i(indent)).append("// Service-locator stubs — return mocked @Repository instead of real DAO\n");
+        for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
+            sb.append(i(indent))
+              .append("lenient().doReturn(").append(sla.fieldName()).append(").when(")
+              .append(subject).append(").").append(sla.locatorMethod()).append("(any());\n");
+        }
         return sb.toString();
     }
 
@@ -1320,17 +1356,33 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      */
     private void buildVerifyHints(MethodMetadata mm, ClassMetadata m,
                                    StringBuilder sb, int indent) {
-        if (mm.parameters().isEmpty()) {
-            sb.append(i(indent)).append("// TODO: verify(mockDep).someMethod();\n");
-            return;
+        // Service-locator repo verify hints — covers repo.save(entity)
+        if (m.hasServiceLocatorRepos()) {
+            sb.append(i(indent)).append("// Verify service-locator @Repository interactions:\n");
+            String entityHint = m.hasEntityConstructions()
+                    ? m.entityConstructions().iterator().next() + ".class"
+                    : "...";
+            for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
+                sb.append(i(indent))
+                  .append("// verify(").append(sla.fieldName()).append(").save(any(")
+                  .append(entityHint).append("));\n");
+                sb.append(i(indent))
+                  .append("// verify(").append(sla.fieldName())
+                  .append(").findById(any()); // if applicable\n");
+            }
         }
-        sb.append(i(indent)).append("// Verify interactions using initialized params:\n");
-        for (MethodMetadata.ParameterMetadata p : mm.parameters()) {
-            String rawType = p.type().replaceAll("<.*>", "").trim();
-            boolean isDomain = defaultValue(p.type()).startsWith("null");
-            String matcher = isDomain ? mockitoMatcher(rawType) : p.name();
-            sb.append(i(indent))
-              .append("// verify(<mockDep>).<method>(").append(matcher).append(");\n");
+        if (!mm.parameters().isEmpty()) {
+            sb.append(i(indent)).append("// Verify interactions using initialized params:\n");
+            for (MethodMetadata.ParameterMetadata p : mm.parameters()) {
+                String rawType = p.type().replaceAll("<.*>", "").trim();
+                boolean isDomain = defaultValue(p.type()).startsWith("null");
+                String matcher = isDomain ? mockitoMatcher(rawType) : p.name();
+                sb.append(i(indent))
+                  .append("// verify(<mockDep>).<method>(").append(matcher).append(");\n");
+            }
+        }
+        if (mm.parameters().isEmpty() && !m.hasServiceLocatorRepos()) {
+            sb.append(i(indent)).append("// TODO: verify(mockDep).someMethod();\n");
         }
     }
 
