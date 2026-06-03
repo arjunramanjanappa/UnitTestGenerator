@@ -410,13 +410,19 @@ public class TestOrchestrator {
             String testDataFileName = depMeta.className() + "TestData.java";
             if (addedTestDataFiles.contains(testDataFileName)) continue;
 
-            // Enrich the dep metadata with the same concrete class names for typed values
-            com.testgen.parser.ClassMetadata enriched =
-                    depMeta.withConcreteClassNames(meta.concreteClassNames());
+            // Place companion TestData in the SAME package as the class under test
+            // so it is generated alongside ClassATest.java, not in the dependency's package.
+            // Also inherit the owning class's import list so FQN resolution works correctly
+            // (avoids same-simple-name ambiguity across packages).
+            com.testgen.parser.ClassMetadata enriched = depMeta
+                    .withConcreteClassNames(meta.concreteClassNames())
+                    .withPackageName(meta.packageName())   // ← same package as ClassA
+                    .withImports(meta.imports());           // ← ClassA's imports as FQN authority
 
             tests.add(dataBuilderGenerator.generate(enriched));
             addedTestDataFiles.add(testDataFileName);
-            log.info("Generated companion TestData for dependency: {}", depMeta.className());
+            log.info("Generated companion TestData for {} in package {}",
+                    depMeta.className(), meta.packageName());
         }
     }
 

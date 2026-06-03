@@ -125,4 +125,20 @@ public record ClassMetadata(
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
                 springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, registry);
     }
+
+    /** Override package — used when placing companion TestData in a different package. */
+    public ClassMetadata withPackageName(String pkg) {
+        return new ClassMetadata(className, pkg, sourceFilePath, classType,
+                annotations, fields, methods, imports, superClassName, interfaces,
+                isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry);
+    }
+
+    /** Override imports — used to supply the owning class's import list for FQN resolution. */
+    public ClassMetadata withImports(List<String> newImports) {
+        return new ClassMetadata(className, packageName, sourceFilePath, classType,
+                annotations, fields, methods, newImports, superClassName, interfaces,
+                isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry);
+    }
 }
