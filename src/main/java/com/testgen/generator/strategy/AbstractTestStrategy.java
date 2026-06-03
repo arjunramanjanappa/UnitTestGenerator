@@ -391,6 +391,15 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .map(MethodMetadata::name)
                 .collect(Collectors.toSet());
 
+        // Collect all method names actually CALLED from ClassA's own testable methods.
+        // Only inherited methods that ClassA actively invokes need to be stubbed —
+        // if saveRecTxn is never called in ClassA, there is no execution path reaching it
+        // and no stub is needed (and it may not even be accessible from the test package).
+        Set<String> calledInClassA = m.methods().stream()
+                .filter(MethodMetadata::isTestable)
+                .flatMap(mm -> mm.helperMethodCalls().stream())
+                .collect(Collectors.toSet());
+
         if (m.hasParentChain()) {
             for (int level = 0; level < m.parentChain().size(); level++) {
                 ClassMetadata parent = m.parentChain().get(level);
@@ -401,13 +410,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                         .filter(mm -> !mm.isFinal())                          // cannot be stubbed
                         .filter(mm -> !overriddenNames.contains(mm.name()))   // already in Category A
                         .filter(mm -> !ownMethodNames.contains(mm.name()))    // ClassA has its own version (overload)
-                        // Protected methods from a DIFFERENT package parent are inaccessible
-                        // from the test class (not same package, not subclass of parent) —
-                        // calling subject.protectedMethod() won't compile from a different package
-                        .filter(mm -> mm.isPublic() || samePackage)
+                        .filter(mm -> calledInClassA.contains(mm.name()))     // only stub what ClassA actually calls
+                        .filter(mm -> mm.isPublic() || samePackage)           // protected: same-package only
                         .toList();
 
-                // Collect protected-only methods that were skipped — emit as comments
+                // Protected methods that ClassA DOES call but can't be stubbed (different package)
                 List<MethodMetadata> inaccessibleProtected = samePackage
                         ? List.of()
                         : parent.methods().stream()
@@ -416,6 +423,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                             .filter(mm -> !mm.isFinal())
                             .filter(mm -> !overriddenNames.contains(mm.name()))
                             .filter(mm -> !ownMethodNames.contains(mm.name()))
+                            .filter(mm -> calledInClassA.contains(mm.name())) // only report if ClassA calls it
                             .toList();
 
                 if (!inaccessibleProtected.isEmpty()) {
