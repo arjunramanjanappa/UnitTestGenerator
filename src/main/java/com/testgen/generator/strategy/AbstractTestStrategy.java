@@ -1326,7 +1326,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                     if (!fv.startsWith("null")) {
                         // Only set fields where we can generate a meaningful typed value
                         sb.append(i(indent)).append(p.name()).append(".set")
-                          .append(toSetterSuffix(f.name())).append("(").append(fv).append(");\n");
+                          .append(toSetterSuffix(f.name(), f.type())).append("(").append(fv).append(");\n");
                     }
                 }
                 continue;
@@ -1349,8 +1349,29 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * Converts a field name to a JavaBeans setter suffix, handling underscores.
      * e.g. "myField" → "MyField", "my_field" → "MyField"
      */
+    /**
+     * Converts a field name to the JavaBeans setter suffix.
+     *
+     * Boolean fields starting with 'is' lose the prefix (Lombok convention):
+     *   isHoldRequired  (boolean)  →  HoldRequired   → setHoldRequired
+     *   holdRequired    (boolean)  →  HoldRequired   → setHoldRequired
+     *   isActive        (boolean)  →  Active         → setActive
+     *   transactionId   (String)   →  TransactionId  → setTransactionId
+     */
     private String toSetterSuffix(String fieldName) {
+        return toSetterSuffix(fieldName, null);
+    }
+
+    private String toSetterSuffix(String fieldName, String fieldType) {
         if (fieldName == null || fieldName.isEmpty()) return fieldName;
+
+        // Boolean field with 'is' prefix — strip it (Lombok / IDE convention)
+        boolean isBool = "boolean".equals(fieldType) || "Boolean".equals(fieldType);
+        if (isBool && fieldName.startsWith("is") && fieldName.length() > 2
+                && Character.isUpperCase(fieldName.charAt(2))) {
+            return fieldName.substring(2); // isHoldRequired → HoldRequired
+        }
+
         if (!fieldName.contains("_")) {
             return Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1);
         }

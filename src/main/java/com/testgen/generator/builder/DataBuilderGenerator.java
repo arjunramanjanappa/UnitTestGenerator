@@ -164,7 +164,7 @@ public class DataBuilderGenerator {
         } else {
             sb.append(I2).append(m.className()).append(" obj = new ").append(m.className()).append("();\n");
             for (FieldMetadata f : nonStaticFields(m)) {
-                String setter = "set" + cap(f.name());
+                String setter = "set" + setterSuffix(f);
                 sb.append(I2).append("obj.").append(setter).append("(").append(validValue(f)).append(");\n");
             }
             sb.append(I2).append("return obj;\n");
@@ -194,7 +194,7 @@ public class DataBuilderGenerator {
         } else {
             sb.append(I2).append(m.className()).append(" obj = new ").append(m.className()).append("();\n");
             for (FieldMetadata f : nonStaticFields(m)) {
-                sb.append(I2).append("obj.").append("set").append(cap(f.name()))
+                sb.append(I2).append("obj.").append("set").append(setterSuffix(f))
                   .append("(").append(invalidValue(f)).append(");\n");
             }
             sb.append(I2).append("return obj;\n");
@@ -224,7 +224,7 @@ public class DataBuilderGenerator {
         } else {
             sb.append(I2).append(m.className()).append(" obj = new ").append(m.className()).append("();\n");
             for (FieldMetadata f : nonStaticFields(m)) {
-                sb.append(I2).append("obj.").append("set").append(cap(f.name()))
+                sb.append(I2).append("obj.").append("set").append(setterSuffix(f))
                   .append("(").append(boundaryValue(f)).append(");\n");
             }
             sb.append(I2).append("return obj;\n");
@@ -557,6 +557,28 @@ public class DataBuilderGenerator {
      *   class_Name  → ClassName   → setClassName
      *   my_field_id → MyFieldId   → setMyFieldId
      */
+    /**
+     * Produces the JavaBeans setter suffix for a field.
+     *
+     * Special case — boolean fields starting with 'is':
+     *   private boolean isHoldRequired  →  setter: setHoldRequired  (strip 'is')
+     *   private boolean holdRequired    →  setter: setHoldRequired  (normal cap)
+     *
+     * This follows Lombok / standard IDEs which strip the 'is' prefix for boolean fields.
+     */
+    private static String setterSuffix(FieldMetadata f) {
+        String name = f.name();
+        String type = f.type().replaceAll("<.*>", "").trim();
+        boolean isBool = "boolean".equals(type) || "Boolean".equals(type);
+
+        if (isBool && name.startsWith("is") && name.length() > 2
+                && Character.isUpperCase(name.charAt(2))) {
+            // isHoldRequired → HoldRequired → setHoldRequired
+            return name.substring(2);
+        }
+        return cap(name);
+    }
+
     private static String cap(String s) {
         if (s == null || s.isEmpty()) return s;
         if (!s.contains("_")) {
