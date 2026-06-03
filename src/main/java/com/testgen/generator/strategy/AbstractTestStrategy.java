@@ -1092,7 +1092,8 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         StringBuilder sb = new StringBuilder();
 
         sb.append(i(indent)).append("@Test\n");
-        sb.append(i(indent)).append("void ").append(testName).append("() {\n");
+        // throws Exception — doThrow().when(subject).method() recording call may throw checked exceptions
+        sb.append(i(indent)).append("void ").append(testName).append("() throws Exception {\n");
         sb.append(i(indent + 1)).append("// Pattern H — stub the spy itself to throw; tests exception propagation\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
@@ -1378,7 +1379,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("@Test\n");
         // Exception test: assertThrows wraps the call in a lambda — no throws clause needed
         sb.append(i(indent)).append("void ")
-          .append(convention.exceptionTestMethod(mm.name(), exType)).append("() {\n");
+          .append(convention.exceptionTestMethod(mm.name(), exType)).append("() throws Exception {\n");
         sb.append(i(indent + 1)).append("// given\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
