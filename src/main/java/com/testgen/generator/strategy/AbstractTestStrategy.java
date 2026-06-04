@@ -589,24 +589,20 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     }
 
     /**
-     * Returns a typed return value for spy stubs based on what we know about the type:
-     *  - In concreteClassNames (source root)  → TypeTestData.buildValidType()
-     *  - In paramTypeRegistry (parsed)        → new Type()
-     *  - Primitive / standard type            → defaultValue()
-     *  - Unknown external type                → null
+     * Returns a typed return value — always using inline new Type() with field setters.
+     * No TestData class references — everything self-contained in the test.
      */
     private String typedReturnValue(String rawReturnType, ClassMetadata m) {
         String rawType = rawReturnType.replaceAll("<.*>", "").trim();
         String base    = defaultValue(rawReturnType);
         if (!base.startsWith("null")) return base; // primitive / standard type
 
-        if (m.concreteClassNames() != null && m.concreteClassNames().contains(rawType)) {
-            return rawType + "TestData.buildValid" + rawType + "()";
-        }
-        if (m.paramTypeRegistry() != null && m.paramTypeRegistry().containsKey(rawType)) {
+        // Always use new Type() — no TestData file references
+        if ((m.concreteClassNames() != null && m.concreteClassNames().contains(rawType))
+                || (m.paramTypeRegistry() != null && m.paramTypeRegistry().containsKey(rawType))) {
             return "new " + rawType + "()";
         }
-        return "null"; // external type — no typed value available
+        return "null";
     }
 
     // ── @BeforeEach ─────────────────────────────────────────────────────────
@@ -872,7 +868,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                     // @Repository interfaces are NOT in concreteClassNames — they get mock().
                     // Plain entity/DTO classes ARE in concreteClassNames — they get TestData.
                     if (m.concreteClassNames() != null && m.concreteClassNames().contains(raw)) {
-                        yield raw + "TestData.buildValid" + raw + "()";
+                        yield "new " + raw + "()";
                     }
                     // Interface, abstract class, @Repository, external type → always mock()
                     yield "mock(" + raw + ".class)";
@@ -947,11 +943,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             String mock = f.name();
             String entity = f.simpleType().replace("Repository", "");
             sb.append(i(indent))
-              .append("// when(").append(mock).append(".findById(any())).thenReturn(Optional.of(")
-              .append(entity).append("TestData.buildValid").append(entity).append("()));\n");
+              .append("// when(").append(mock).append(".findById(any())).thenReturn(Optional.of(new ")
+              .append(entity).append("()));\n");
             sb.append(i(indent))
-              .append("// when(").append(mock).append(".findAll()).thenReturn(")
-              .append(entity).append("TestData.build").append(entity).append("List());\n");
+              .append("// when(").append(mock).append(".findAll()).thenReturn(new java.util.ArrayList<>());\n");
             sb.append(i(indent))
               .append("// when(").append(mock).append(".save(any())).thenAnswer(inv -> inv.getArgument(0));\n");
             sb.append(i(indent))
@@ -1007,30 +1002,32 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             com.testgen.parser.ConditionScenario sc = mm.conditionScenarios().get(0);
             String ownerTestData = m.className() + "TestData";
 
-            // TRUE branch
+            // TRUE branch — inline object with condition set
             String trueName = convention.unitTestMethod(mm.name(), "when_" + sc.trueLabel(), buildParamSuffix(mm));
             sb.append(i(indent)).append("@Test\n");
             sb.append(i(indent)).append("void ").append(trueName).append("()").append(throwsDecl).append(" {\n");
-            sb.append(i(indent + 1)).append("// ").append(sc.paramName()).append(".")
-              .append(sc.fieldName()).append(" = ").append(sc.trueSetExpr()).append(" → TRUE branch\n");
             sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
-              .append(" = ").append(ownerTestData).append(".").append(sc.trueMethodName()).append("();\n");
+              .append(" = new ").append(sc.paramType()).append("();\n");
+            if (!sc.trueSetExpr().startsWith("null") && !sc.trueSetExpr().startsWith("/*")) {
+                sb.append(i(indent + 1)).append(sc.paramName()).append(".").append(sc.setterName())
+                  .append("(").append(sc.trueSetExpr()).append("); // condition TRUE: ").append(sc.fieldName()).append("\n");
+            }
             if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
             if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
-            else sb.append(i(indent + 1)).append("// TODO: verify dependency interaction for TRUE branch\n");
             sb.append(i(indent)).append("}\n\n");
 
-            // FALSE branch
+            // FALSE branch — inline object with condition set to negative value
             String falseName = convention.unitTestMethod(mm.name(), "when_" + sc.falseLabel(), buildParamSuffix(mm));
             sb.append(i(indent)).append("@Test\n");
             sb.append(i(indent)).append("void ").append(falseName).append("()").append(throwsDecl).append(" {\n");
-            sb.append(i(indent + 1)).append("// ").append(sc.paramName()).append(".")
-              .append(sc.fieldName()).append(" = ").append(sc.falseSetExpr()).append(" → FALSE branch\n");
             sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
-              .append(" = ").append(ownerTestData).append(".").append(sc.falseMethodName()).append("();\n");
+              .append(" = new ").append(sc.paramType()).append("();\n");
+            if (!sc.falseSetExpr().startsWith("null") && !sc.falseSetExpr().startsWith("/*")) {
+                sb.append(i(indent + 1)).append(sc.paramName()).append(".").append(sc.setterName())
+                  .append("(").append(sc.falseSetExpr()).append("); // condition FALSE: ").append(sc.fieldName()).append("\n");
+            }
             if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
             if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
-            else sb.append(i(indent + 1)).append("// TODO: verify dependency interaction for FALSE branch\n");
             sb.append(i(indent)).append("}\n\n");
             return sb.toString();
         }
@@ -1041,7 +1038,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("void ").append(trueName).append("()").append(throwsDecl).append(" {\n");
         sb.append(i(indent + 1)).append("// TRUE branch — configure input/mock to trigger condition\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
-        sb.append(i(indent + 1)).append("// TODO: set condition field via param or ReflectionTestUtils\n");
+        sb.append(i(indent + 1)).append("// Set condition field: ReflectionTestUtils.setField(subject, \"fieldName\", value);\n");
         if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
         if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
         sb.append(i(indent)).append("}\n\n");
@@ -1051,7 +1048,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("void ").append(falseName).append("()").append(throwsDecl).append(" {\n");
         sb.append(i(indent + 1)).append("// FALSE branch — configure input/mock for the negative condition\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
-        sb.append(i(indent + 1)).append("// TODO: set condition field via param or ReflectionTestUtils\n");
+        sb.append(i(indent + 1)).append("// Set condition field: ReflectionTestUtils.setField(subject, \"fieldName\", value);\n");
         if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
         if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
         else sb.append(i(indent + 1)).append("// TODO: verify dependency interaction for FALSE branch\n");
@@ -1533,7 +1530,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                     String value = defaultValue(p.type());
                     if (value.startsWith("null") && concreteClassNames != null
                             && concreteClassNames.contains(raw)) {
-                        return raw + "TestData.buildValid" + raw + "()";
+                        return "new " + raw + "()";
                     }
                     return value;
                 })
@@ -1752,14 +1749,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                         .limit(3) // top 3 fields to keep it concise
                         .forEach(f -> sb.append(i(indent))
                                 .append("// assertNotNull(result.get").append(toSetterSuffix(f.name())).append("());\n"));
-            } else if (m.concreteClassNames() != null && m.concreteClassNames().contains(rawReturn)) {
-                sb.append(i(indent)).append("// assertNotNull(result); // ").append(rawReturn)
-                  .append("TestData.buildValid").append(rawReturn).append("() shows available fields\n");
             } else {
-                sb.append(i(indent)).append("// TODO: assert specific fields on result\n");
+                sb.append(i(indent)).append("// assertNotNull(result.getFieldName()); // add field assertions\n");
             }
         } else {
-            sb.append(i(indent)).append("// TODO: assertEquals(expectedValue, result);\n");
+            sb.append(i(indent)).append("// assertEquals(expectedValue, result);\n");
         }
     }
 
@@ -1806,7 +1800,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     /** Returns an appropriate return-value hint for mock stub setup. */
     private String typedReturnHint(String rawType, ClassMetadata m) {
         if (m.concreteClassNames() != null && m.concreteClassNames().contains(rawType)) {
-            return rawType + "TestData.buildValid" + rawType + "()";
+            return "new " + rawType + "()"; // inline — no TestData file needed
         }
         com.testgen.parser.ClassMetadata meta =
                 m.paramTypeRegistry() != null ? m.paramTypeRegistry().get(rawType) : null;
@@ -1894,41 +1888,30 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 continue;
             }
 
-            // Check concreteClassNames first — TestData file will be generated for it
-            if (concreteClassNames != null && concreteClassNames.contains(rawType)) {
-                sb.append(i(indent)).append(p.type()).append(" ").append(p.name()).append(" = ")
-                  .append(rawType).append("TestData.buildValid").append(rawType).append("();\n");
-                continue;
-            }
-
-            // Check paramTypeRegistry — source found, generate typed inline init
+            // Inline initialization — no TestData class references.
+            // Use field metadata if available for typed setter calls.
             com.testgen.parser.ClassMetadata typeMeta =
                     paramTypeRegistry != null ? paramTypeRegistry.get(rawType) : null;
-            if (typeMeta != null) {
+            if (typeMeta != null || (concreteClassNames != null && concreteClassNames.contains(rawType))) {
                 sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
                   .append(" = new ").append(rawType).append("();\n");
-                for (com.testgen.parser.FieldMetadata f : typeMeta.fields()) {
-                    if (f.isInjected() || f.isApplicationContext() || f.isValue()) continue;
-                    String fv = defaultValue(f.type());
-                    if (!fv.startsWith("null")) {
-                        // Only set fields where we can generate a meaningful typed value
-                        sb.append(i(indent)).append(p.name()).append(".set")
-                          .append(toSetterSuffix(f.name(), f.type())).append("(").append(fv).append(");\n");
+                if (typeMeta != null) {
+                    for (com.testgen.parser.FieldMetadata f : typeMeta.fields()) {
+                        if (f.isInjected() || f.isApplicationContext() || f.isValue() || f.isStatic()) continue;
+                        String fv = defaultValue(f.type());
+                        if (!fv.startsWith("null")) {
+                            sb.append(i(indent)).append(p.name()).append(".set")
+                              .append(toSetterSuffix(f.name(), f.type())).append("(").append(fv).append(");\n");
+                        }
                     }
                 }
                 continue;
             }
 
-            // External / unknown type — check defaultValue first (handles java.sql.Timestamp etc.)
-            // before falling back to new Type() which may not have a no-arg constructor
+            // External / unknown type
             String extVal = defaultValue(rawType);
-            if (!extVal.startsWith("null")) {
-                sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
-                  .append(" = ").append(extVal).append(";\n");
-            } else {
-                sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
-                  .append(" = new ").append(rawType).append("(); // external type — set required fields manually\n");
-            }
+            sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
+              .append(" = ").append(extVal.startsWith("null") ? "new " + rawType + "()" : extVal).append(";\n");
         }
     }
 

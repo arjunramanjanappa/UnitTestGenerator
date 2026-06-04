@@ -139,25 +139,9 @@ public class TestOrchestrator {
                 meta = meta.withServiceLocatorRepos(resolveServiceLocatorRepos(meta, fileIndex));
 
                 TestStrategy strategy = pickStrategy(meta, xmlRoutes);
+                // Generate ONLY the test class — no separate TestData files.
+                // All domain object setup is inline inside the test class itself.
                 List<GeneratedTest> tests = new ArrayList<>(strategy.generate(meta, convention));
-
-                // Generate TestData for the class under test
-                tests.add(dataBuilderGenerator.generate(meta));
-
-                // Also generate TestData for every domain type referenced in method params / return types
-                // so the generated tests compile without missing XxxTestData references
-                generateDependentTestData(meta, tests, javaFiles, fileIndex);
-
-                // Generate TestData for @Repository method return entity types
-                // (TPIBCasCounter returned by findByInternalId etc.) to cover all code paths
-                generateRepoReturnTestData(meta, tests, javaFiles, fileIndex);
-
-                // Cascade: generate TestData for domain object FIELD types within already-generated
-                // TestData classes (e.g. FTBaseVO has CoolingPeriodVO field →
-                // CoolingPeriodVOTestData must be generated so FTBaseVOTestData compiles)
-                Set<String> cascadeGenerated = new HashSet<>();
-                cascadeGenerated.add(meta.className()); // don't re-generate the main class
-                generateFieldTypeTestData(meta, tests, fileIndex, cascadeGenerated);
 
                 for (GeneratedTest test : tests) {
                     if (dryRun) {
