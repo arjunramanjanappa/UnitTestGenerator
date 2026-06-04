@@ -94,7 +94,7 @@ public class JavaClassParser {
                     superClass, interfaces,
                     cls.isAbstract(), false,
                     hasLombok, hasBuilder, genericTypeParams, null,
-                    List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of()  // parentChain / ifaceDefaults / concreteNames / paramTypeRegistry / entityConstructions / serviceLocatorRepos
+                    List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of()  // parentChain/ifaceDefaults/concrete/paramRegistry/entities/serviceLocator/staticTypes
             ));
 
         } catch (IOException e) {
@@ -227,13 +227,24 @@ public class JavaClassParser {
                 .toList();
 
         // Pattern A: static dependency calls — scope is an uppercase-starting NameExpr
-        List<String> staticCallClasses = allCalls.stream()
+        List<MethodCallExpr> staticCalls = allCalls.stream()
                 .filter(call -> call.getScope()
                         .filter(s -> s instanceof NameExpr)
                         .map(s -> ((NameExpr) s).getNameAsString())
                         .filter(n -> !n.isEmpty() && Character.isUpperCase(n.charAt(0)))
                         .isPresent())
+                .toList();
+
+        List<String> staticCallClasses = staticCalls.stream()
                 .map(call -> ((NameExpr) call.getScope().get()).getNameAsString())
+                .distinct()
+                .toList();
+
+        // "ClassName.methodName" tokens — used to look up return types from source
+        List<String> staticCallTokens = staticCalls.stream()
+                .map(call -> ((NameExpr) call.getScope().get()).getNameAsString()
+                             + "." + call.getNameAsString()
+                             + ":" + call.getArguments().size()) // argCount for overload resolution
                 .distinct()
                 .toList();
 
@@ -323,7 +334,7 @@ public class JavaClassParser {
                 method.isStatic(), method.isAbstract(), method.isFinal(),
                 annotations.contains("Override"),
                 false,
-                superCalls, staticCallClasses, helperCalls,
+                superCalls, staticCallClasses, staticCallTokens, helperCalls,
                 hasConditionals, hasNumericComparisons, hasTryCatch,
                 conditionScenarios, constructedTypes, castToTypes, repoMethodCallTokens
         );

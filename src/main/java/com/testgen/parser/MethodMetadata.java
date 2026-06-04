@@ -17,6 +17,7 @@ public record MethodMetadata(
         boolean isConstructor,
         List<String> superMethodCalls,          // super.xxx() calls in body
         List<String> staticCallClasses,         // Uppercase-scoped method calls → likely static
+        List<String> staticCallTokens,          // "ClassName.methodName" tokens for return-type lookup
         List<String> helperMethodCalls,         // internal method calls (structural)
         boolean hasConditionals,                // if/else/switch/ternary
         boolean hasNumericComparisons,          // >, <, >=, <=, compareTo

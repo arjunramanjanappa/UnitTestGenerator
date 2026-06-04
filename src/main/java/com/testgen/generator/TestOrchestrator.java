@@ -129,6 +129,9 @@ public class TestOrchestrator {
                 // Detect @Entity types instantiated inline via new X() — use MockedConstruction in tests
                 meta = meta.withEntityConstructions(resolveEntityConstructions(meta, fileIndex));
 
+                // Resolve static method return types for type-aware mock stubs
+                meta = meta.withResolvedStaticTypes(resolveStaticReturnTypes(meta, fileIndex));
+
                 // Detect @Repository types obtained via service-locator cast — add mocks + verify stubs
                 meta = meta.withServiceLocatorRepos(resolveServiceLocatorRepos(meta, fileIndex));
 
@@ -354,7 +357,7 @@ public class TestOrchestrator {
                     Modifier.isPublic(mod), Modifier.isProtected(mod),
                     false, Modifier.isAbstract(mod), Modifier.isFinal(mod),
                     false, false,
-                    List.of(), List.of(), List.of(), false, false, false, List.of(), List.of(), List.of(), List.of()
+                    List.of(), List.of(), List.of(), List.of(), false, false, false, List.of(), List.of(), List.of(), List.of()
             ));
         }
 
@@ -369,7 +372,7 @@ public class TestOrchestrator {
                 superName, List.of(),
                 Modifier.isAbstract(clazz.getModifiers()), clazz.isInterface(),
                 false, false, List.of(), null,
-                List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of()
+                List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of()
         );
     }
 
@@ -463,6 +466,48 @@ public class TestOrchestrator {
                 generateFieldTypeTestData(enriched, tests, fileIndexForCascade, depVisited);
             }
         }
+    }
+
+    // ── Static method return type resolution ───────────────────────────────
+
+    /**
+     * For each static call token "ClassName.methodName:argCount" detected in the class,
+     * looks up the static class source and resolves the method's return type.
+     * Result: "ClassName.methodName" → "ReturnType" for type-aware mock stub generation.
+     */
+    private Map<String, String> resolveStaticReturnTypes(ClassMetadata m, Map<String, Path> fileIndex) {
+        Map<String, String> result = new HashMap<>();
+        m.methods().stream()
+                .filter(mm -> mm.staticCallTokens() != null)
+                .flatMap(mm -> mm.staticCallTokens().stream())
+                .distinct()
+                .forEach(token -> {
+                    // token format: "ClassName.methodName:argCount"
+                    int dotIdx   = token.indexOf('.');
+                    int colonIdx = token.lastIndexOf(':');
+                    if (dotIdx < 0 || colonIdx < 0) return;
+
+                    String className  = token.substring(0, dotIdx);
+                    String methodName = token.substring(dotIdx + 1, colonIdx);
+                    int argCount      = Integer.parseInt(token.substring(colonIdx + 1));
+                    String key        = className + "." + methodName;
+                    if (result.containsKey(key)) return;
+
+                    Path srcFile = fileIndex.get(className);
+                    if (srcFile == null) return;
+                    try {
+                        com.github.javaparser.ast.CompilationUnit cu =
+                                com.github.javaparser.StaticJavaParser.parse(srcFile);
+                        cu.findFirst(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.class)
+                                .ifPresent(cls -> cls.getMethods().stream()
+                                        .filter(md -> md.getNameAsString().equals(methodName))
+                                        .filter(md -> md.getParameters().size() == argCount
+                                                || md.isVariableArityMethod())
+                                        .findFirst()
+                                        .ifPresent(md -> result.put(key, md.getTypeAsString())));
+                    } catch (Exception ignored) {}
+                });
+        return result.isEmpty() ? Map.of() : result;
     }
 
     // ── Entity construction detection ──────────────────────────────────────

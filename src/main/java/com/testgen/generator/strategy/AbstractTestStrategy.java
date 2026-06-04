@@ -1033,6 +1033,8 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         for (String staticClass : mm.staticCallClasses()) {
             // Only mock business/external utilities — never JDK classes
             if (JDK_CLASSES.contains(staticClass)) continue;
+            // Skip if no calls detected with tokens (safety check)
+            if (mm.staticCallTokens() == null) continue;
 
             // Only generate if we have a meaningful behavior to add (class in source or known)
             // Skip if the class is likely a JDK utility based on lowercase package hint
@@ -1044,11 +1046,29 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             sb.append(i(indent)).append("void ").append(testName).append("()").append(throwsDecl).append(" {\n");
             sb.append(i(indent + 1)).append("try (MockedStatic<").append(staticClass)
               .append("> mockedStatic = mockStatic(").append(staticClass).append(".class)) {\n");
-            // Must provide behavior — empty MockedStatic has no value
-            sb.append(i(indent + 2)).append("// Provide behavior before calling subject:\n");
-            sb.append(i(indent + 2)).append("mockedStatic.when(() -> ").append(staticClass)
-              .append("./* method */(any())).thenReturn(/* expectedValue */);")
-              .append(" // TODO: fill in method + return\n");
+            // Generate type-aware behavior for each detected static call
+            boolean hasBehavior = false;
+            if (mm.staticCallTokens() != null) {
+                for (String token : mm.staticCallTokens()) {
+                    if (!token.startsWith(staticClass + ".")) continue;
+                    int colon = token.lastIndexOf(':');
+                    String methodName = token.substring(staticClass.length() + 1, colon);
+                    String key = staticClass + "." + methodName;
+                    String retType = m.resolvedStaticTypes() != null
+                            ? m.resolvedStaticTypes().get(key) : null;
+                    if (retType != null && !"void".equals(retType)) {
+                        String retVal = typedReturnValue(retType, m);
+                        sb.append(i(indent + 2))
+                          .append("mockedStatic.when(() -> ").append(staticClass).append(".")
+                          .append(methodName).append("(any())).thenReturn(").append(retVal).append(");\n");
+                        hasBehavior = true;
+                    }
+                }
+            }
+            if (!hasBehavior) {
+                sb.append(i(indent + 2)).append("// TODO: mockedStatic.when(() -> ").append(staticClass)
+                  .append(".method(any())).thenReturn(expectedValue);\n");
+            }
             buildParamSetup(mm, sb, indent + 2, m.concreteClassNames(), m.paramTypeRegistry());
             if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 2);
             if (mm.hasReturnValue()) {
@@ -1212,18 +1232,17 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             sb.append(i(indent + 1)).append("}\n\n");
         }
 
-        // Widen protected inherited methods called by ClassA
+        // Widen ALL protected inherited methods from different-package parents.
+        // Rule: any protected method you want to stub MUST be in the TestSubClass.
+        // We include ALL protected methods (not just called ones) so developers can
+        // freely stub any of them without compile errors.
         if (m.hasParentChain()) {
-            Set<String> calledInClassA = m.methods().stream()
-                    .filter(MethodMetadata::isTestable)
-                    .flatMap(mm -> mm.helperMethodCalls().stream())
-                    .collect(Collectors.toSet());
             Set<String> added = new HashSet<>();
             for (ClassMetadata parent : m.parentChain()) {
                 if (m.packageName().equals(parent.packageName())) continue;
                 for (MethodMetadata pm : parent.methods()) {
                     if (!pm.isProtected() || pm.isPublic()) continue;
-                    if (!calledInClassA.contains(pm.name())) continue;
+                    if (pm.isFinal()) continue; // final cannot be overridden
                     if (!added.add(pm.name())) continue;
 
                     String params = pm.parameters().stream()
@@ -1525,18 +1544,19 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             sb.append(buildExceptionTestMethod(mm, subject, primaryException, indent, m));
         }
 
-        // Pattern C: branch tests for conditional logic
+        // Branch tests — only when condition affects behaviour
         sb.append(buildBranchTests(mm, subject, m, indent));
 
-        // Pattern G: numeric boundary tests
-        sb.append(buildBoundaryTests(mm, subject, m, indent));
-
-        // Pattern A: static dependency mock tests
-        sb.append(buildStaticMockTests(mm, subject, m, indent));
-
-        // Pattern H: exception flow test (try/catch)
-        if (mm.hasTryCatch()) {
-            sb.append(buildExceptionFlowTest(mm, subject, m, indent));
+        // Additional tests ONLY for high-value methods (complex logic, not simple getters)
+        if (isHighValueMethod(mm)) {
+            // Numeric boundary tests
+            sb.append(buildBoundaryTests(mm, subject, m, indent));
+            // Static dependency mock tests (non-JDK only)
+            sb.append(buildStaticMockTests(mm, subject, m, indent));
+            // Exception flow test (try/catch)
+            if (mm.hasTryCatch()) {
+                sb.append(buildExceptionFlowTest(mm, subject, m, indent));
+            }
         }
 
         // @Entity inline construction — use MockedConstruction to intercept new X()
@@ -1898,6 +1918,33 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return mm.parameters().stream()
                 .map(MethodMetadata.ParameterMetadata::name)
                 .collect(Collectors.joining(", "));
+    }
+
+    // ── Test quality filter ──────────────────────────────────────────────────
+
+    /**
+     * Returns true for methods worth generating additional pattern tests (boundary, static, exception).
+     *
+     * A method is HIGH-VALUE if it has real logic:
+     *   - Has conditionals, try/catch, numeric comparisons, static calls, or helper calls
+     *   - Not a simple getter (getName) or setter (setName)
+     *
+     * Simple getters/setters with no logic → skip pattern tests, just generate the success stub.
+     */
+    protected boolean isHighValueMethod(MethodMetadata mm) {
+        // Explicitly skip simple getter / setter patterns
+        String name = mm.name();
+        if ((name.startsWith("get") || name.startsWith("is")) && mm.parameters().isEmpty()) return false;
+        if (name.startsWith("set") && mm.parameters().size() == 1) return false;
+
+        // High-value: has any form of complexity
+        return mm.hasConditionals()
+                || mm.hasTryCatch()
+                || mm.hasNumericComparisons()
+                || mm.hasStaticDependencies()
+                || mm.hasHelperCalls()
+                || !mm.thrownExceptions().isEmpty()
+                || mm.parameters().size() > 1;
     }
 
     // ── Mockito matcher helpers ──────────────────────────────────────────────
