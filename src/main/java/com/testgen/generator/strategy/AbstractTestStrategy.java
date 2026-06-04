@@ -623,13 +623,13 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * When @InjectMocks is used, also emits the @InjectMocks annotation.
      */
     protected String buildSubjectDeclaration(ClassMetadata m, int indent) {
+        // Use TestableClassName when the subclass is generated (widens protected methods)
+        String typeName = needsTestablSubclass(m) ? testableName(m) : m.className();
         if (requiresSpyPattern(m)) {
-            // Spy: declared as plain field, initialised in @BeforeEach
-            return i(indent) + "private " + m.className() + " subject;\n\n";
+            return i(indent) + "private " + typeName + " subject;\n\n";
         } else {
-            // @InjectMocks: Mockito handles injection (constructor / field / setter)
             return i(indent) + "@InjectMocks\n"
-                 + i(indent) + "private " + m.className() + " subject;\n\n";
+                 + i(indent) + "private " + typeName + " subject;\n\n";
         }
     }
 
@@ -647,9 +647,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("void setUp() throws Exception {\n");
 
         if (useSpy) {
-            // spy(new ClassName()) — wraps a real instance so real methods execute unless stubbed.
-            // Dependencies are injected via ReflectionTestUtils after spy creation.
-            sb.append(i(indent + 1)).append(subject).append(" = spy(new ").append(m.className()).append("());\n\n");
+            // Use TestableClassName when it was generated (widens protected parent methods)
+            String spyType = needsTestablSubclass(m) ? testableName(m) : m.className();
+            sb.append(i(indent + 1)).append(spyType).append(" rawSpy = new ").append(spyType).append("();\n");
+            sb.append(i(indent + 1)).append(subject).append(" = spy(rawSpy);\n\n");
 
             // Inject all mocks via ReflectionTestUtils (BAU field injection — source not modified)
             for (FieldMetadata f : m.mockCandidates()) {
@@ -675,15 +676,21 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(buildRepositoryStubs(m, indent + 1));
 
         if (useSpy) {
+            // If using testable subclass, inject service-locator mocks via _mockDaos map
+            if (needsTestablSubclass(m) && m.hasServiceLocatorRepos()) {
+                sb.append(i(indent + 1)).append("// Inject service-locator mocks into testable subclass\n");
+                for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
+                    sb.append(i(indent + 1)).append("((").append(testableName(m)).append(") rawSpy)._mockDaos.put(")
+                      .append(sla.repoType()).append(".BEAN_ID, ").append(sla.fieldName()).append(");\n");
+                }
+            } else if (m.hasServiceLocatorRepos()) {
+                sb.append(buildServiceLocatorStubs(m, subject, indent + 1));
+            }
             // Stub internal helpers on spy (Pattern D)
             sb.append(buildHelperMethodStubs(m, subject, indent + 1));
-            // Stub all parent methods on spy (Patterns A/B)
+            // Stub parent methods on spy (Patterns A/B)
             if (m.hasSuperClass()) {
                 sb.append(buildSuperClassStubs(m, indent + 1));
-            }
-            // Stub service-locator calls to return the mocked @Repository
-            if (m.hasServiceLocatorRepos()) {
-                sb.append(buildServiceLocatorStubs(m, subject, indent + 1));
             }
         }
 
@@ -1115,6 +1122,132 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         for (int i = extraIndent; i > 0; i--) {
             sb.append(i(indent + i)).append("}\n");
         }
+        sb.append(i(indent)).append("}\n\n");
+        return sb.toString();
+    }
+
+    // ── Testable subclass generation ────────────────────────────────────────
+
+    /**
+     * Returns true when a testable subclass is needed because:
+     * - The class has protected methods from a different-package parent that are
+     *   called by ClassA's own code (need widening to public for test access)
+     * - OR the service-locator method (makeDAO) is inherited protected and cannot
+     *   be called directly from the test
+     */
+    protected boolean needsTestablSubclass(ClassMetadata m) {
+        if (!m.hasSuperClass()) return false;
+
+        // Service locator from parent — makeDAO can't be called from test package
+        if (m.hasServiceLocatorRepos()) {
+            boolean locatorFromParent = m.serviceLocatorRepos().stream()
+                    .anyMatch(sla -> !isOwnAccessibleMethod(sla.locatorMethod(), m));
+            if (locatorFromParent) return true;
+        }
+
+        // Protected parent methods that ClassA calls but are inaccessible from test
+        if (!m.hasParentChain()) return false;
+        Set<String> calledInClassA = m.methods().stream()
+                .filter(MethodMetadata::isTestable)
+                .flatMap(mm -> mm.helperMethodCalls().stream())
+                .collect(Collectors.toSet());
+        return m.parentChain().stream().anyMatch(parent -> {
+            boolean samePackage = m.packageName().equals(parent.packageName());
+            if (samePackage) return false;
+            return parent.methods().stream()
+                    .filter(mm -> mm.isProtected() && !mm.isPublic())
+                    .anyMatch(mm -> calledInClassA.contains(mm.name()));
+        });
+    }
+
+    /**
+     * Returns "Testable" + className — the type used for the spy subject.
+     */
+    protected String testableName(ClassMetadata m) {
+        return "Testable" + m.className();
+    }
+
+    /**
+     * Generates a static inner testable subclass that:
+     * 1. Widens protected methods from the parent to public so the test can call them
+     * 2. Overrides service-locator (makeDAO) to return injected mock dependencies
+     *
+     * Example:
+     *   static class TestableClassA extends ClassA {
+     *       // Service-locator override — returns injected mocks
+     *       final Map<String,Object> _mockDaos = new HashMap<>();
+     *
+     *       @Override protected Object makeDAO(String beanId) {
+     *           Object m = _mockDaos.get(beanId); return m != null ? m : super.makeDAO(beanId);
+     *       }
+     *
+     *       // Widened protected methods
+     *       @Override public void saveRecTxn(FTBasevo ftBasevo) throws Exception {
+     *           super.saveRecTxn(ftBasevo);
+     *       }
+     *   }
+     */
+    protected String buildTestablSubclass(ClassMetadata m, int indent) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(i(indent)).append("/**\n");
+        sb.append(i(indent)).append(" * Testable subclass — widens protected parent methods to public\n");
+        sb.append(i(indent)).append(" * and overrides service-locator to return injected mock dependencies.\n");
+        sb.append(i(indent)).append(" */\n");
+        sb.append(i(indent)).append("static class ").append(testableName(m)).append(" extends ")
+          .append(m.className()).append(" {\n\n");
+
+        // Service-locator override
+        boolean hasLocatorOverride = m.hasServiceLocatorRepos() && m.serviceLocatorRepos().stream()
+                .anyMatch(sla -> !isOwnAccessibleMethod(sla.locatorMethod(), m));
+        if (hasLocatorOverride) {
+            sb.append(i(indent + 1)).append("// Inject mock DAOs here — used by makeDAO override\n");
+            sb.append(i(indent + 1)).append("final java.util.Map<String, Object> _mockDaos = new java.util.HashMap<>();\n\n");
+
+            // Find the locator method signature from parent chain
+            String locatorMethod = m.serviceLocatorRepos().get(0).locatorMethod();
+            sb.append(i(indent + 1)).append("@Override\n");
+            sb.append(i(indent + 1)).append("protected Object ").append(locatorMethod).append("(String beanId) {\n");
+            sb.append(i(indent + 2)).append("Object mock = _mockDaos.get(beanId);\n");
+            sb.append(i(indent + 2)).append("return mock != null ? mock : null; // return null if not found (avoids real context)\n");
+            sb.append(i(indent + 1)).append("}\n\n");
+        }
+
+        // Widen protected inherited methods called by ClassA
+        if (m.hasParentChain()) {
+            Set<String> calledInClassA = m.methods().stream()
+                    .filter(MethodMetadata::isTestable)
+                    .flatMap(mm -> mm.helperMethodCalls().stream())
+                    .collect(Collectors.toSet());
+            Set<String> added = new HashSet<>();
+            for (ClassMetadata parent : m.parentChain()) {
+                if (m.packageName().equals(parent.packageName())) continue;
+                for (MethodMetadata pm : parent.methods()) {
+                    if (!pm.isProtected() || pm.isPublic()) continue;
+                    if (!calledInClassA.contains(pm.name())) continue;
+                    if (!added.add(pm.name())) continue;
+
+                    String params = pm.parameters().stream()
+                            .map(p -> p.type() + " " + p.name())
+                            .collect(Collectors.joining(", "));
+                    String throwsDecl = pm.throwsExceptions()
+                            ? " throws " + String.join(", ", pm.thrownExceptions()) : "";
+                    String callParams = paramNames(pm);
+                    sb.append(i(indent + 1)).append("@Override\n");
+                    sb.append(i(indent + 1)).append("public ")
+                      .append(pm.returnType()).append(" ").append(pm.name())
+                      .append("(").append(params).append(")").append(throwsDecl).append(" {\n");
+                    if (pm.hasReturnValue()) {
+                        sb.append(i(indent + 2)).append("return super.").append(pm.name())
+                          .append("(").append(callParams).append(");\n");
+                    } else {
+                        sb.append(i(indent + 2)).append("super.").append(pm.name())
+                          .append("(").append(callParams).append(");\n");
+                    }
+                    sb.append(i(indent + 1)).append("}\n\n");
+                }
+            }
+        }
+
         sb.append(i(indent)).append("}\n\n");
         return sb.toString();
     }
