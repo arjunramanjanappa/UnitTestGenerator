@@ -191,29 +191,44 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             usedSimpleNames.addAll(m.entityConstructions());
         }
 
-        // Build FQN → simple-name map: start with the source class's own imports
+        // Build FQN → simple-name map.
+        // RULE: always infer from source class — never guess packages.
+        // Priority: explicit imports > static member imports > same-package types
         Map<String, String> simpleToFqn = new LinkedHashMap<>();
+        List<String> wildcardPackages = new ArrayList<>(); // "import com.example.*" packages
+
         for (String fqn : m.imports()) {
+            if (fqn.endsWith(".*")) {
+                // Wildcard import — package will be searched in fileIndex
+                wildcardPackages.add(fqn.substring(0, fqn.length() - 2)); // strip ".*"
+                continue;
+            }
             String simpleName = fqn.contains(".")
                     ? fqn.substring(fqn.lastIndexOf('.') + 1)
                     : fqn;
             simpleToFqn.put(simpleName, fqn);
 
             // Handle static member imports: "import static com.uob.MasterUtil.METHOD_NAME"
-            // JavaParser returns "com.uob.MasterUtil.METHOD_NAME" as the FQN.
-            // simpleName → "METHOD_NAME" but we also need "MasterUtil" → "com.uob.MasterUtil"
-            // so MockedStatic<MasterUtil> gets its import.
             if (fqn.contains(".")) {
                 int lastDot = fqn.lastIndexOf('.');
                 int prevDot  = fqn.lastIndexOf('.', lastDot - 1);
                 if (prevDot >= 0) {
                     String parentSeg = fqn.substring(prevDot + 1, lastDot);
                     if (!parentSeg.isEmpty() && Character.isUpperCase(parentSeg.charAt(0))) {
-                        // parentSeg looks like a class name — register it too
                         simpleToFqn.putIfAbsent(parentSeg, fqn.substring(0, lastDot));
                     }
                 }
             }
+        }
+
+        // Resolve wildcard packages: look up class names in paramTypeRegistry and concreteClassNames
+        // to find which FQN corresponds to a used simple name from a wildcard-imported package
+        if (!wildcardPackages.isEmpty() && m.paramTypeRegistry() != null) {
+            m.paramTypeRegistry().values().forEach(dep -> {
+                if (dep.packageName() != null && wildcardPackages.contains(dep.packageName())) {
+                    simpleToFqn.putIfAbsent(dep.className(), dep.fullClassName());
+                }
+            });
         }
 
         // Also add imports from paramTypeRegistry entries (repo interfaces, dep classes)
@@ -1233,16 +1248,22 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         }
 
         // Widen ALL protected inherited methods from different-package parents.
-        // Rule: any protected method you want to stub MUST be in the TestSubClass.
-        // We include ALL protected methods (not just called ones) so developers can
-        // freely stub any of them without compile errors.
+        // Visibility rule:
+        //   protected in superclass + test in different package
+        //   → do NOT stub with Mockito (can't call from test package)
+        //   → override here with ISOLATED implementation (no super call)
+        //
+        // Isolation strategy:
+        //   void method  → empty body  (no side effects, fully controlled)
+        //   return type  → typed default return (no parent logic executed)
+        //   service loc  → handled above via _mockDaos map
         if (m.hasParentChain()) {
             Set<String> added = new HashSet<>();
             for (ClassMetadata parent : m.parentChain()) {
                 if (m.packageName().equals(parent.packageName())) continue;
                 for (MethodMetadata pm : parent.methods()) {
                     if (!pm.isProtected() || pm.isPublic()) continue;
-                    if (pm.isFinal()) continue; // final cannot be overridden
+                    if (pm.isFinal()) continue;
                     if (!added.add(pm.name())) continue;
 
                     String params = pm.parameters().stream()
@@ -1250,17 +1271,21 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                             .collect(Collectors.joining(", "));
                     String throwsDecl = pm.throwsExceptions()
                             ? " throws " + String.join(", ", pm.thrownExceptions()) : "";
-                    String callParams = paramNames(pm);
                     sb.append(i(indent + 1)).append("@Override\n");
                     sb.append(i(indent + 1)).append("public ")
                       .append(pm.returnType()).append(" ").append(pm.name())
                       .append("(").append(params).append(")").append(throwsDecl).append(" {\n");
                     if (pm.hasReturnValue()) {
-                        sb.append(i(indent + 2)).append("return super.").append(pm.name())
-                          .append("(").append(callParams).append(");\n");
+                        // Typed default return — parent logic NOT executed
+                        String retVal = typedReturnValue(pm.returnType(), m);
+                        sb.append(i(indent + 2)).append("return ").append(retVal)
+                          .append("; // isolated — parent ").append(parent.className())
+                          .append(".").append(pm.name()).append("() NOT called\n");
                     } else {
-                        sb.append(i(indent + 2)).append("super.").append(pm.name())
-                          .append("(").append(callParams).append(");\n");
+                        // void — empty body, fully isolated
+                        sb.append(i(indent + 2)).append("// void isolated — parent ")
+                          .append(parent.className()).append(".").append(pm.name())
+                          .append("() NOT called\n");
                     }
                     sb.append(i(indent + 1)).append("}\n\n");
                 }
@@ -1515,7 +1540,8 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("void ")
           .append(convention.unitTestMethod(mm.name(), "success", paramSuffix))
           .append("()").append(throwsClause).append(" {\n");
-        sb.append(i(indent + 1)).append("// given — params auto-initialized with typed defaults\n");
+        sb.append(i(indent + 1)).append("// Test public method — private methods execute naturally via this call\n");
+        sb.append(i(indent + 1)).append("// Control behaviour by mocking dependencies (DAO, static utils, repos)\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
         // Mock stub hints using typed matchers (any(TypeName.class)) for each domain param
