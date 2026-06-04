@@ -667,6 +667,24 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             sb.append(i(indent + 1)).append(spyType).append(" rawSpy = new ").append(spyType).append("();\n");
             sb.append(i(indent + 1)).append(subject).append(" = spy(rawSpy);\n\n");
 
+            // Private method isolation: identify which injected deps private methods use.
+            // Private methods run naturally when public methods are called.
+            // Controlling the mocked deps below is sufficient to control private behaviour.
+            Set<String> mockFieldNames = m.mockCandidates().stream()
+                    .map(FieldMetadata::name).collect(Collectors.toSet());
+            List<String> privateDeps = m.methods().stream()
+                    .filter(mm -> !mm.isPublic() && !mm.isProtected() && !mm.isConstructor())
+                    .flatMap(mm -> mm.accessedFieldNames() != null
+                            ? mm.accessedFieldNames().stream() : java.util.stream.Stream.empty())
+                    .filter(mockFieldNames::contains)
+                    .distinct()
+                    .toList();
+            if (!privateDeps.isEmpty()) {
+                sb.append(i(indent + 1)).append("// Private methods covered indirectly via public method calls.\n");
+                sb.append(i(indent + 1)).append("// Controlling these mocked deps controls private method behaviour:\n");
+                sb.append(i(indent + 1)).append("// ").append(String.join(", ", privateDeps)).append("\n\n");
+            }
+
             // Inject all mocks via ReflectionTestUtils (BAU field injection — source not modified)
             for (FieldMetadata f : m.mockCandidates()) {
                 if (!f.isApplicationContext()) {

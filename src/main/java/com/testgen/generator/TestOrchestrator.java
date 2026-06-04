@@ -342,22 +342,31 @@ public class TestOrchestrator {
             if (Modifier.isStatic(mod) || method.isSynthetic() || method.isBridge()) continue;
             if (!Modifier.isPublic(mod) && !Modifier.isProtected(mod)) continue;
 
-            List<MethodMetadata.ParameterMetadata> params = Arrays.stream(method.getParameters())
-                    .map(p -> new MethodMetadata.ParameterMetadata(
-                            p.getType().getSimpleName(), p.getName()))
-                    .toList();
-            List<String> thrown = Arrays.stream(method.getExceptionTypes())
-                    .map(Class::getSimpleName)
+            // Use generic type info where available to preserve type parameters
+            List<MethodMetadata.ParameterMetadata> params = new ArrayList<>();
+            java.lang.reflect.Type[] genericParamTypes = method.getGenericParameterTypes();
+            java.lang.reflect.Parameter[] rawParams = method.getParameters();
+            for (int pi = 0; pi < rawParams.length; pi++) {
+                String typeName = pi < genericParamTypes.length
+                        ? simplifyReflectedType(genericParamTypes[pi])
+                        : rawParams[pi].getType().getSimpleName();
+                params.add(new MethodMetadata.ParameterMetadata(typeName, rawParams[pi].getName()));
+            }
+            // Exact throws clause from reflection
+            List<String> thrown = Arrays.stream(method.getGenericExceptionTypes())
+                    .map(this::simplifyReflectedType)
                     .toList();
 
+            // Use generic return type for exact signature (List<X>, Optional<X>, etc.)
+            String returnTypeName = simplifyReflectedType(method.getGenericReturnType());
             methods.add(new MethodMetadata(
                     method.getName(),
-                    method.getReturnType().getSimpleName(),
+                    returnTypeName,
                     params, thrown, List.of(),
                     Modifier.isPublic(mod), Modifier.isProtected(mod),
                     false, Modifier.isAbstract(mod), Modifier.isFinal(mod),
                     false, false,
-                    List.of(), List.of(), List.of(), List.of(), false, false, false, List.of(), List.of(), List.of(), List.of()
+                    List.of(), List.of(), List.of(), List.of(), false, false, false, List.of(), List.of(), List.of(), List.of(), List.of()
             ));
         }
 
@@ -538,6 +547,29 @@ public class TestOrchestrator {
                     } catch (Exception ignored) {}
                 });
         return entities.isEmpty() ? Set.of() : Collections.unmodifiableSet(entities);
+    }
+
+    // ── Reflection type name helpers ───────────────────────────────────────
+
+    /**
+     * Converts a reflected generic type to a simple readable name.
+     * e.g. java.util.List<java.lang.String> → List<String>
+     *      java.util.Optional<com.example.FTBaseVO> → Optional<FTBaseVO>
+     */
+    private String simplifyReflectedType(java.lang.reflect.Type type) {
+        if (type instanceof Class<?> cls) {
+            return cls.getSimpleName();
+        }
+        if (type instanceof java.lang.reflect.ParameterizedType pt) {
+            String raw = ((Class<?>) pt.getRawType()).getSimpleName();
+            String args = Arrays.stream(pt.getActualTypeArguments())
+                    .map(this::simplifyReflectedType)
+                    .collect(Collectors.joining(", "));
+            return raw + "<" + args + ">";
+        }
+        if (type instanceof java.lang.reflect.WildcardType) return "?";
+        if (type instanceof java.lang.reflect.TypeVariable) return "Object";
+        return type.getTypeName().replaceAll("[a-z]+\\.", ""); // strip package prefixes
     }
 
     // ── Field-type cascade TestData generation ─────────────────────────────

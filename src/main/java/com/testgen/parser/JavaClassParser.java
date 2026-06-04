@@ -326,6 +326,15 @@ public class JavaClassParser {
                 .distinct()
                 .toList();
 
+        // Detect class field accesses (for private method isolation documentation)
+        // Stored as simple field/variable names accessed with no scope or 'this' scope
+        List<String> accessedFields = method.findAll(NameExpr.class).stream()
+                .map(NameExpr::getNameAsString)
+                .filter(name -> !name.isEmpty() && Character.isLowerCase(name.charAt(0)))
+                .filter(name -> !name.equals(method.getNameAsString()))
+                .distinct()
+                .toList();
+
         return new MethodMetadata(
                 method.getNameAsString(),
                 method.getTypeAsString(),
@@ -336,7 +345,8 @@ public class JavaClassParser {
                 false,
                 superCalls, staticCallClasses, staticCallTokens, helperCalls,
                 hasConditionals, hasNumericComparisons, hasTryCatch,
-                conditionScenarios, constructedTypes, castToTypes, repoMethodCallTokens
+                conditionScenarios, constructedTypes, castToTypes, repoMethodCallTokens,
+                accessedFields
         );
     }
 

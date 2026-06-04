@@ -25,7 +25,8 @@ public record MethodMetadata(
         List<ConditionScenario> conditionScenarios, // detected branch conditions with scenarios
         List<String> constructedTypes,          // types instantiated via 'new X()' in body
         List<String> castToTypes,               // types used in cast expressions — potential service-locator repos
-        List<String> repoMethodCallTokens      // "RepoType|methodName|argCount" for calls on cast vars
+        List<String> repoMethodCallTokens,     // "RepoType|methodName|argCount" for calls on cast vars
+        List<String> accessedFieldNames        // class fields accessed inside this method (for private isolation comment)
 ) {
     public boolean hasReturnValue() {
         return !"void".equals(returnType);
