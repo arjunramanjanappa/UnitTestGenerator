@@ -647,18 +647,9 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("void setUp() throws Exception {\n");
 
         if (useSpy) {
-            // Use mock(Class, CALLS_REAL_METHODS) instead of spy(new Class()).
-            //
-            // spy(new Class()) calls the constructor which can cause StackOverflowError
-            // in BAU Spring classes whose constructors trigger circular method calls
-            // or complex Mockito proxy initialization (Objects.requireNonNull loop).
-            //
-            // mock(Class, CALLS_REAL_METHODS) uses Objenesis — skips the constructor,
-            // calls real method implementations for non-stubbed methods, and allows
-            // all the same doReturn/doNothing stubbing as a regular spy.
-            sb.append(i(indent + 1)).append("// CALLS_REAL_METHODS: avoids StackOverflow from constructor\n");
-            sb.append(i(indent + 1)).append(subject).append(" = mock(")
-              .append(m.className()).append(".class, CALLS_REAL_METHODS);\n\n");
+            // spy(new ClassName()) — wraps a real instance so real methods execute unless stubbed.
+            // Dependencies are injected via ReflectionTestUtils after spy creation.
+            sb.append(i(indent + 1)).append(subject).append(" = spy(new ").append(m.className()).append("());\n\n");
 
             // Inject all mocks via ReflectionTestUtils (BAU field injection — source not modified)
             for (FieldMetadata f : m.mockCandidates()) {
@@ -917,67 +908,74 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     protected String buildBranchTests(MethodMetadata mm, String subject,
                                        ClassMetadata m, int indent) {
         if (!mm.hasConditionals()) return "";
+
+        // Only generate branch tests when the condition AFFECTS observable behaviour:
+        // - method has a return value (different branch → different output), OR
+        // - method has service-locator / repo calls (different branch → different dep called)
+        // Skip branch tests for void methods with no dep interactions — not meaningful.
+        boolean affectsOutput = mm.hasReturnValue()
+                || m.hasServiceLocatorRepos()
+                || !m.mockCandidates().isEmpty();
+        if (!affectsOutput) return "";
+
         StringBuilder sb = new StringBuilder();
         String throwsDecl = checkedThrowsClause(mm);
 
-        // If condition scenarios were detected, generate targeted tests using named TestData
+        // Only generate ONE pair per method (most impactful condition).
+        // Generating one pair per IfStmt leads to over-mocking with empty assertions.
         if (mm.hasConditionScenarios()) {
-            for (com.testgen.parser.ConditionScenario sc : mm.conditionScenarios()) {
-                String ownerTestData = m.className() + "TestData";
+            // Use the first detected condition scenario only
+            com.testgen.parser.ConditionScenario sc = mm.conditionScenarios().get(0);
+            String ownerTestData = m.className() + "TestData";
 
-                // TRUE branch — uses named scenario method from ClassATestData
-                String trueName = convention.unitTestMethod(mm.name(),
-                        "when_" + sc.trueLabel(), buildParamSuffix(mm));
-                sb.append(i(indent)).append("@Test\n");
-                sb.append(i(indent)).append("void ").append(trueName).append("()").append(throwsDecl).append(" {\n");
-                sb.append(i(indent + 1)).append("// Scenario: ").append(sc.paramName()).append(".")
-                  .append(sc.fieldName()).append(" = ").append(sc.trueSetExpr())
-                  .append(" → condition TRUE → ").append(sc.trueLabel()).append("\n");
-                // Use named scenario from ClassATestData
-                sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
-                  .append(" = ").append(ownerTestData).append(".").append(sc.trueMethodName()).append("();\n");
-                if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
-                sb.append(i(indent + 1)).append("// TODO: assert TRUE-branch outcome\n");
-                sb.append(i(indent)).append("}\n\n");
+            // TRUE branch
+            String trueName = convention.unitTestMethod(mm.name(), "when_" + sc.trueLabel(), buildParamSuffix(mm));
+            sb.append(i(indent)).append("@Test\n");
+            sb.append(i(indent)).append("void ").append(trueName).append("()").append(throwsDecl).append(" {\n");
+            sb.append(i(indent + 1)).append("// ").append(sc.paramName()).append(".")
+              .append(sc.fieldName()).append(" = ").append(sc.trueSetExpr()).append(" → TRUE branch\n");
+            sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
+              .append(" = ").append(ownerTestData).append(".").append(sc.trueMethodName()).append("();\n");
+            if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
+            if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
+            else sb.append(i(indent + 1)).append("// TODO: verify dependency interaction for TRUE branch\n");
+            sb.append(i(indent)).append("}\n\n");
 
-                // FALSE branch
-                String falseName = convention.unitTestMethod(mm.name(),
-                        "when_" + sc.falseLabel(), buildParamSuffix(mm));
-                sb.append(i(indent)).append("@Test\n");
-                sb.append(i(indent)).append("void ").append(falseName).append("()").append(throwsDecl).append(" {\n");
-                sb.append(i(indent + 1)).append("// Scenario: ").append(sc.paramName()).append(".")
-                  .append(sc.fieldName()).append(" = ").append(sc.falseSetExpr())
-                  .append(" → condition FALSE → ").append(sc.falseLabel()).append("\n");
-                sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
-                  .append(" = ").append(ownerTestData).append(".").append(sc.falseMethodName()).append("();\n");
-                if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
-                sb.append(i(indent + 1)).append("// TODO: assert FALSE-branch outcome\n");
-                sb.append(i(indent)).append("}\n\n");
-            }
+            // FALSE branch
+            String falseName = convention.unitTestMethod(mm.name(), "when_" + sc.falseLabel(), buildParamSuffix(mm));
+            sb.append(i(indent)).append("@Test\n");
+            sb.append(i(indent)).append("void ").append(falseName).append("()").append(throwsDecl).append(" {\n");
+            sb.append(i(indent + 1)).append("// ").append(sc.paramName()).append(".")
+              .append(sc.fieldName()).append(" = ").append(sc.falseSetExpr()).append(" → FALSE branch\n");
+            sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
+              .append(" = ").append(ownerTestData).append(".").append(sc.falseMethodName()).append("();\n");
+            if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
+            if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
+            else sb.append(i(indent + 1)).append("// TODO: verify dependency interaction for FALSE branch\n");
+            sb.append(i(indent)).append("}\n\n");
             return sb.toString();
         }
 
-        // Generic fallback when no specific conditions were detected
-        String trueName = convention.unitTestMethod(mm.name(), "when_condition_isTrue",
-                buildParamSuffix(mm));
+        // Generic fallback — only 1 pair, only when behaviour is affected
+        String trueName = convention.unitTestMethod(mm.name(), "when_condition_isTrue", buildParamSuffix(mm));
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ").append(trueName).append("()").append(throwsDecl).append(" {\n");
-        sb.append(i(indent + 1)).append("// Pattern C — TRUE branch: configure subject/mocks for the positive condition\n");
+        sb.append(i(indent + 1)).append("// TRUE branch — configure input/mock to trigger condition\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
-        sb.append(i(indent + 1)).append("// TODO: set field / doReturn to trigger TRUE branch\n");
+        sb.append(i(indent + 1)).append("// TODO: set condition field via param or ReflectionTestUtils\n");
         if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
-        sb.append(i(indent + 1)).append("// TODO: assert true-branch outcome\n");
+        if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
         sb.append(i(indent)).append("}\n\n");
 
-        String falseName = convention.unitTestMethod(mm.name(), "when_condition_isFalse",
-                buildParamSuffix(mm));
+        String falseName = convention.unitTestMethod(mm.name(), "when_condition_isFalse", buildParamSuffix(mm));
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ").append(falseName).append("()").append(throwsDecl).append(" {\n");
-        sb.append(i(indent + 1)).append("// Pattern C — FALSE branch\n");
+        sb.append(i(indent + 1)).append("// FALSE branch — configure input/mock for the negative condition\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
-        sb.append(i(indent + 1)).append("// TODO: set field / doReturn to trigger FALSE branch\n");
+        sb.append(i(indent + 1)).append("// TODO: set condition field via param or ReflectionTestUtils\n");
         if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
-        sb.append(i(indent + 1)).append("// TODO: assert false-branch outcome\n");
+        if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
+        else sb.append(i(indent + 1)).append("// TODO: verify dependency interaction for FALSE branch\n");
         sb.append(i(indent)).append("}\n\n");
 
         return sb.toString();
@@ -1007,6 +1005,18 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     // ── Pattern A: static dependency mock tests ─────────────────────────────
 
+    // JDK classes that should NEVER be mocked statically
+    private static final Set<String> JDK_CLASSES = Set.of(
+            "String", "Integer", "Long", "Double", "Float", "Boolean", "Byte", "Short", "Character",
+            "Math", "System", "Arrays", "Collections", "Objects", "Optional",
+            "List", "Map", "Set", "ArrayList", "HashMap", "HashSet", "LinkedList",
+            "BigDecimal", "BigInteger", "UUID", "Date", "Calendar",
+            "LocalDate", "LocalDateTime", "LocalTime", "ZonedDateTime", "Instant",
+            "NumberFormat", "DecimalFormat", "SimpleDateFormat",
+            "StringBuilder", "StringBuffer", "Thread", "Runtime",
+            "Class", "Object", "Enum", "Throwable", "Exception", "Error"
+    );
+
     protected String buildStaticMockTests(MethodMetadata mm, String subject,
                                            ClassMetadata m, int indent) {
         if (!mm.hasStaticDependencies()) return "";
@@ -1014,18 +1024,29 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         String throwsDecl = checkedThrowsClause(mm);
 
         for (String staticClass : mm.staticCallClasses()) {
+            // Only mock business/external utilities — never JDK classes
+            if (JDK_CLASSES.contains(staticClass)) continue;
+
+            // Only generate if we have a meaningful behavior to add (class in source or known)
+            // Skip if the class is likely a JDK utility based on lowercase package hint
+            if (staticClass.length() < 3) continue;
+
             String testName = convention.unitTestMethod(mm.name(),
                     "with_" + staticClass + "_mocked", buildParamSuffix(mm));
             sb.append(i(indent)).append("@Test\n");
             sb.append(i(indent)).append("void ").append(testName).append("()").append(throwsDecl).append(" {\n");
-            sb.append(i(indent + 1)).append("// Pattern A — static dependency: mock ").append(staticClass).append("\n");
-            sb.append(i(indent + 1)).append("try (MockedStatic<").append(staticClass).append("> mockedStatic = mockStatic(")
-              .append(staticClass).append(".class)) {\n");
-            sb.append(i(indent + 2)).append("// TODO: mockedStatic.when(() -> ").append(staticClass)
-              .append(".someMethod(any())).thenReturn(expectedValue);\n");
+            sb.append(i(indent + 1)).append("try (MockedStatic<").append(staticClass)
+              .append("> mockedStatic = mockStatic(").append(staticClass).append(".class)) {\n");
+            // Must provide behavior — empty MockedStatic has no value
+            sb.append(i(indent + 2)).append("// Provide behavior before calling subject:\n");
+            sb.append(i(indent + 2)).append("mockedStatic.when(() -> ").append(staticClass)
+              .append("./* method */(any())).thenReturn(/* expectedValue */);")
+              .append(" // TODO: fill in method + return\n");
             buildParamSetup(mm, sb, indent + 2, m.concreteClassNames(), m.paramTypeRegistry());
             if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 2);
-            sb.append(i(indent + 2)).append("// TODO: assert result\n");
+            if (mm.hasReturnValue()) {
+                sb.append(i(indent + 2)).append("assertNotNull(result);\n");
+            }
             sb.append(i(indent + 1)).append("}\n");
             sb.append(i(indent)).append("}\n\n");
         }
@@ -1098,6 +1119,21 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
+    /** Returns the name of the best dependency mock to use for triggering an exception.
+     *  Prefers service-locator repos → injected mocks → null if none available. */
+    private String pickExceptionTriggerDep(ClassMetadata m) {
+        // Prefer service-locator repos (most likely to be the trigger in BAU code)
+        if (m.hasServiceLocatorRepos()) {
+            return m.serviceLocatorRepos().get(0).fieldName();
+        }
+        // Fallback to first non-ApplicationContext mock
+        return m.mockCandidates().stream()
+                .filter(f -> !f.isApplicationContext())
+                .map(FieldMetadata::name)
+                .findFirst()
+                .orElse(null);
+    }
+
     // ── Pattern H: exception flow test ──────────────────────────────────────
 
     protected String buildExceptionFlowTest(MethodMetadata mm, String subject,
@@ -1108,35 +1144,31 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         StringBuilder sb = new StringBuilder();
 
         sb.append(i(indent)).append("@Test\n");
-        // throws Exception — doThrow().when(subject).method() recording call may throw checked exceptions
         sb.append(i(indent)).append("void ").append(testName).append("() throws Exception {\n");
-        sb.append(i(indent + 1)).append("// Pattern H — stub the spy itself to throw; tests exception propagation\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
-        // Stub subject (spy) to throw — works for ClassA's own public/protected methods.
-        // doThrow on the spy intercepts the call before executing the method body.
-        String exMatchers = mm.parameters().stream()
-                .map(p -> mockitoMatcher(p.type()))
-                .collect(Collectors.joining(", "));
-        if (isOwnAccessibleMethod(mm.name(), m)) {
+        // Trigger exception via a DEPENDENCY mock — not via the subject itself.
+        // Stubbing the subject would bypass the code under test (testing Mockito, not your code).
+        String depForThrow = pickExceptionTriggerDep(m);
+        if (depForThrow != null) {
+            sb.append(i(indent + 1))
+              .append("// Trigger ").append(exType).append(" by making a dependency throw\n");
             sb.append(i(indent + 1))
               .append("doThrow(new ").append(exType).append("(\"test\"))")
-              .append(".when(subject).").append(mm.name()).append("(").append(exMatchers).append(");\n");
+              .append(".when(").append(depForThrow).append(").anyMethod(any());\n");
+            sb.append(i(indent + 1)).append("// TODO: replace anyMethod() with the actual dep method that causes the throw\n");
         } else {
-            // Inherited method — cannot call directly; leave as a hint comment
             sb.append(i(indent + 1))
-              .append("// doThrow(new ").append(exType).append("(\"test\"))")
-              .append(".when(subject).").append(mm.name()).append("(").append(exMatchers).append("); // inherited\n");
+              .append("// TODO: configure a dependency to throw ").append(exType)
+              .append(" — do NOT stub subject.").append(mm.name()).append("() directly\n");
         }
 
-        sb.append(i(indent + 1)).append("// Assert the final exception (may be wrapped by try/catch re-throw)\n");
+        sb.append(i(indent + 1)).append("assertThrows(").append(exType).append(".class, () ->\n");
         if (mm.isProtected()) {
-            sb.append(i(indent + 1)).append("assertThrows(").append(exType).append(".class, () ->\n");
             sb.append(i(indent + 2)).append("ReflectionTestUtils.invokeMethod(subject, \"")
               .append(mm.name()).append("\"")
               .append(mm.parameters().isEmpty() ? "" : ", " + paramNames(mm)).append("));\n");
         } else {
-            sb.append(i(indent + 1)).append("assertThrows(").append(exType).append(".class, () ->\n");
             sb.append(i(indent + 2)).append("subject.").append(mm.name()).append("(").append(paramNames(mm)).append("));\n");
         }
         sb.append(i(indent)).append("}\n\n");
@@ -1399,20 +1431,17 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent + 1)).append("// given\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
-        // Stub the spy subject to throw — consistent with Pattern H approach
-        String throwMatchers = mm.parameters().stream()
-                .map(p -> mockitoMatcher(p.type()))
-                .collect(Collectors.joining(", "));
-        if (isOwnAccessibleMethod(mm.name(), m)) {
+        // Trigger exception via DEPENDENCY — not by stubbing the subject.
+        // doThrow().when(subject).method() tests Mockito stubbing, not your code.
+        String depForThrow2 = pickExceptionTriggerDep(m);
+        if (depForThrow2 != null) {
             sb.append(i(indent + 1))
               .append("doThrow(new ").append(exType).append("(\"test\"))")
-              .append(".when(").append(subject).append(").").append(mm.name())
-              .append("(").append(throwMatchers).append(");\n");
+              .append(".when(").append(depForThrow2).append(").anyMethod(any());\n");
+            sb.append(i(indent + 1)).append("// TODO: replace anyMethod() with the actual dep method\n");
         } else {
             sb.append(i(indent + 1))
-              .append("// doThrow(new ").append(exType).append("(\"test\"))")
-              .append(".when(").append(subject).append(").").append(mm.name())
-              .append("(").append(throwMatchers).append("); // inherited — verify access\n");
+              .append("// TODO: configure a dependency to throw ").append(exType).append("\n");
         }
 
         sb.append(i(indent + 1)).append("// when / then\n");
