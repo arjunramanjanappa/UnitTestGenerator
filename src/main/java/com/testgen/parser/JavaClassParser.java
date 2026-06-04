@@ -94,7 +94,7 @@ public class JavaClassParser {
                     superClass, interfaces,
                     cls.isAbstract(), false,
                     hasLombok, hasBuilder, genericTypeParams, null,
-                    List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of()  // parentChain/ifaceDefaults/concrete/paramRegistry/entities/serviceLocator/staticTypes
+                    List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of(), List.of()  // parentChain/ifaceDefaults/concrete/paramRegistry/entities/serviceLocator/staticTypes/appCtxRepos
             ));
 
         } catch (IOException e) {
@@ -327,11 +327,22 @@ public class JavaClassParser {
                 .toList();
 
         // Detect class field accesses (for private method isolation documentation)
-        // Stored as simple field/variable names accessed with no scope or 'this' scope
         List<String> accessedFields = method.findAll(NameExpr.class).stream()
                 .map(NameExpr::getNameAsString)
                 .filter(name -> !name.isEmpty() && Character.isLowerCase(name.charAt(0)))
                 .filter(name -> !name.equals(method.getNameAsString()))
+                .distinct()
+                .toList();
+
+        // Detect ApplicationContext.getBean(X.class) / getBean("name", X.class) patterns
+        // These represent DAO/service lookups via Spring context — need separate mocks
+        List<String> getBeanTypes = method.findAll(MethodCallExpr.class).stream()
+                .filter(call -> call.getNameAsString().equals("getBean")
+                        && !call.getArguments().isEmpty())
+                .flatMap(call -> call.getArguments().stream())
+                .filter(arg -> arg instanceof ClassExpr)
+                .map(arg -> ((ClassExpr) arg).getType().asString().replaceAll("<.*>", "").trim())
+                .filter(t -> !t.isEmpty() && Character.isUpperCase(t.charAt(0)))
                 .distinct()
                 .toList();
 
@@ -346,7 +357,7 @@ public class JavaClassParser {
                 superCalls, staticCallClasses, staticCallTokens, helperCalls,
                 hasConditionals, hasNumericComparisons, hasTryCatch,
                 conditionScenarios, constructedTypes, castToTypes, repoMethodCallTokens,
-                accessedFields
+                accessedFields, getBeanTypes
         );
     }
 

@@ -129,6 +129,9 @@ public class TestOrchestrator {
                 // Detect @Entity types instantiated inline via new X() — use MockedConstruction in tests
                 meta = meta.withEntityConstructions(resolveEntityConstructions(meta, fileIndex));
 
+                // Detect ApplicationContext.getBean(X.class) repo/DAO lookups (separate from makeDAO)
+                meta = meta.withAppContextRepos(resolveAppContextRepos(meta, fileIndex));
+
                 // Resolve static method return types for type-aware mock stubs
                 meta = meta.withResolvedStaticTypes(resolveStaticReturnTypes(meta, fileIndex));
 
@@ -366,7 +369,7 @@ public class TestOrchestrator {
                     Modifier.isPublic(mod), Modifier.isProtected(mod),
                     false, Modifier.isAbstract(mod), Modifier.isFinal(mod),
                     false, false,
-                    List.of(), List.of(), List.of(), List.of(), false, false, false, List.of(), List.of(), List.of(), List.of(), List.of()
+                    List.of(), List.of(), List.of(), List.of(), false, false, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
             ));
         }
 
@@ -381,7 +384,7 @@ public class TestOrchestrator {
                 superName, List.of(),
                 Modifier.isAbstract(clazz.getModifiers()), clazz.isInterface(),
                 false, false, List.of(), null,
-                List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of()
+                List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of(), List.of()
         );
     }
 
@@ -702,6 +705,52 @@ public class TestOrchestrator {
         );
     }
 
+    // ── ApplicationContext.getBean repo resolution ──────────────────────────
+
+    /**
+     * Detects repos/DAOs obtained via ApplicationContext.getBean(X.class) or
+     * getBean("name", X.class). These are separate from makeDAO-based service locators
+     * and need their own @Mock fields injected differently.
+     *
+     * Pattern detected: context.getBean(TPIBFTPayeeRepo.class) → repo type = TPIBFTPayeeRepo
+     */
+    private List<com.testgen.parser.ServiceLocatorAccess> resolveAppContextRepos(
+            ClassMetadata m, Map<String, Path> fileIndex) {
+        List<com.testgen.parser.ServiceLocatorAccess> result = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+
+        m.methods().stream()
+                .filter(mm -> mm.getBeanCallTypes() != null)
+                .forEach(mm -> mm.getBeanCallTypes().forEach(typeName -> {
+                    if (!seen.add(typeName)) return;
+                    Path srcFile = fileIndex.get(typeName);
+                    if (srcFile == null) return;
+                    try {
+                        com.github.javaparser.ast.CompilationUnit cu =
+                                com.github.javaparser.StaticJavaParser.parse(srcFile);
+                        cu.findFirst(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.class)
+                                .ifPresent(cls -> {
+                                    boolean isRepo = cls.getAnnotations().stream()
+                                            .map(a -> a.getNameAsString())
+                                            .anyMatch(a -> a.equals("Repository") || a.equals("Component"));
+                                    if (!isRepo) return;
+
+                                    // Detect which method calls getBean for this type
+                                    String locator = mm.helperMethodCalls().stream()
+                                            .findFirst().orElse("applicationContext");
+
+                                    List<com.testgen.parser.ServiceLocatorAccess.RepoCall> calls =
+                                            resolveRepoCalls(typeName, mm, cls);
+                                    result.add(new com.testgen.parser.ServiceLocatorAccess(
+                                            typeName, locator,
+                                            com.testgen.parser.ServiceLocatorAccess.toFieldName(typeName),
+                                            calls));
+                                });
+                    } catch (Exception ignored) {}
+                }));
+        return result;
+    }
+
     // ── Service locator repo resolution ────────────────────────────────────
 
     /**
@@ -717,6 +766,44 @@ public class TestOrchestrator {
 
         List<com.testgen.parser.ServiceLocatorAccess> result = new ArrayList<>();
         Set<String> seen = new HashSet<>();
+
+        // Also detect wrapper methods: getPayeeRepo() { return (TPIBFTPayeeRepo) makeDAO(...) }
+        // If a helper method in the parent chain returns a @Repository type, use that specific type
+        Set<String> calledViaHelper = m.methods().stream()
+                .filter(MethodMetadata::isTestable)
+                .flatMap(mm -> mm.helperMethodCalls().stream())
+                .collect(Collectors.toSet());
+        if (m.hasParentChain()) {
+            for (ClassMetadata parent : m.parentChain()) {
+                for (MethodMetadata pm : parent.methods()) {
+                    if (!calledViaHelper.contains(pm.name())) continue;
+                    if (!pm.hasReturnValue()) continue;
+                    String retType = pm.returnType().replaceAll("<.*>", "").trim();
+                    if (retType.isEmpty() || !Character.isUpperCase(retType.charAt(0))) continue;
+                    // If this wrapper returns a specific type (not Object/void), add to castToTypes pool
+                    Path srcFile = fileIndex.get(retType);
+                    if (srcFile != null) {
+                        try {
+                            com.github.javaparser.ast.CompilationUnit cu =
+                                    com.github.javaparser.StaticJavaParser.parse(srcFile);
+                            boolean isRepo = cu.findFirst(
+                                    com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.class)
+                                    .map(cls -> cls.getAnnotations().stream()
+                                            .anyMatch(a -> a.getNameAsString().equals("Repository")))
+                                    .orElse(false);
+                            if (isRepo && seen.add(retType)) {
+                                result.add(new com.testgen.parser.ServiceLocatorAccess(
+                                        retType, pm.name(),
+                                        com.testgen.parser.ServiceLocatorAccess.toFieldName(retType),
+                                        List.of()));
+                                log.info("Detected specific repo type {} from wrapper method {}()",
+                                        retType, pm.name());
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+        }
 
         m.methods().stream()
                 .filter(mm -> mm.castToTypes() != null)

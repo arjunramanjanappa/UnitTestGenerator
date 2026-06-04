@@ -317,13 +317,26 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     protected String buildMockDeclarations(ClassMetadata m, int indent) {
         StringBuilder sb = new StringBuilder();
         sb.append(buildMockDeclarations(m.mockCandidates(), indent, m.concreteClassNames()));
-        // Service-locator repos are not @Autowired fields — add @Mock for them explicitly
+        // Layer 1: makeDAO-based service locator repos
         if (m.hasServiceLocatorRepos()) {
-            sb.append(i(indent)).append("// Service-locator @Repository mocks (obtained via makeDAO/factory)\n");
+            sb.append(i(indent)).append("// Service-locator repos (via makeDAO/factory pattern)\n");
             for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
                 sb.append(i(indent)).append("@Mock\n");
                 sb.append(i(indent)).append("private ").append(sla.repoType())
                   .append(" ").append(sla.fieldName()).append(";\n\n");
+            }
+        }
+        // Layer 2: ApplicationContext.getBean() repos — separate mocks, injected differently
+        if (m.hasAppContextRepos()) {
+            sb.append(i(indent)).append("// AppContext repos (via getBean(X.class) pattern)\n");
+            for (com.testgen.parser.ServiceLocatorAccess sla : m.appContextRepos()) {
+                // Skip if already generated from service-locator layer (dedup)
+                boolean alreadyAdded = m.hasServiceLocatorRepos() && m.serviceLocatorRepos().stream()
+                        .anyMatch(s -> s.repoType().equals(sla.repoType()));
+                if (alreadyAdded) continue;
+                sb.append(i(indent)).append("@Mock\n");
+                sb.append(i(indent)).append("private ").append(sla.repoType())
+                  .append(" ").append(sla.fieldName()).append("; // via ApplicationContext.getBean()\n\n");
             }
         }
         return sb.toString();
@@ -767,7 +780,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      *   →  lenient().doReturn(tpibFTPayeeRepo).when(subject).makeDAO(any());
      */
     protected String buildServiceLocatorStubs(ClassMetadata m, String subject, int indent) {
-        if (!m.hasServiceLocatorRepos()) return "";
+        if (!m.hasServiceLocatorRepos() && !m.hasAppContextRepos()) return "";
         StringBuilder sb = new StringBuilder();
         sb.append(i(indent)).append("// Service-locator stubs — return mocked @Repository instead of real DAO\n");
         for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
@@ -794,6 +807,32 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                   .append("lenient().when(").append(sla.fieldName()).append(".")
                   .append(call.methodName()).append("(").append(matchers).append("))")
                   .append(".thenReturn(").append(returnVal).append(");\n");
+            }
+        }
+
+        // Layer 2: ApplicationContext.getBean(X.class) stubs
+        // Stub applicationContext mock to return specific type mocks when requested by type
+        if (m.hasAppContextRepos()) {
+            sb.append(i(indent)).append("// AppContext pattern: stub getBean(X.class) → specific mock\n");
+            String ctxField = m.fields().stream()
+                    .filter(com.testgen.parser.FieldMetadata::isApplicationContext)
+                    .map(com.testgen.parser.FieldMetadata::name)
+                    .findFirst().orElse("applicationContext");
+            for (com.testgen.parser.ServiceLocatorAccess sla : m.appContextRepos()) {
+                sb.append(i(indent))
+                  .append("lenient().when(").append(ctxField).append(".getBean(")
+                  .append(sla.repoType()).append(".class)).thenReturn(").append(sla.fieldName()).append(");\n");
+                // Also stub method calls on this repo
+                for (com.testgen.parser.ServiceLocatorAccess.RepoCall call : sla.repoCalls()) {
+                    String matchers = call.params().stream()
+                            .map(p -> mockitoMatcher(p.type()))
+                            .collect(Collectors.joining(", "));
+                    String returnVal = repoReturnValue(call.returnType(), m);
+                    sb.append(i(indent))
+                      .append("lenient().when(").append(sla.fieldName()).append(".")
+                      .append(call.methodName()).append("(").append(matchers).append("))")
+                      .append(".thenReturn(").append(returnVal).append(");\n");
+                }
             }
         }
         return sb.toString();
