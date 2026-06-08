@@ -442,53 +442,38 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * For multi-level chains, ancestor stubs are appended after the direct parent stubs.
      */
     /**
-     * Stubs ALL public/protected methods from the parent chain on the spy subject.
+     * Emits comments/notes about parent-class methods. Does NOT stub the methods under test.
      *
-     * With spy(new ClassA()), any inherited method that is NOT stubbed will execute
-     * the real ClassB implementation — which may call external dependencies, throw
-     * exceptions, or produce unexpected side effects.
-     *
-     * Two categories:
-     *  A) Overridden methods — ClassA overrides ClassB; stub on spy to isolate ClassA logic
-     *  B) Inherited non-overridden methods — ClassA inherits directly; stub on spy
-     *     to prevent real ClassB code from running during ClassA's unit tests
+     * CRITICAL RULE: the method under test must NEVER be stubbed.
+     *   - Overridden methods (@Override) are ClassA's OWN code being tested → run for real.
+     *     Stubbing them would mean the test exercises the stub, not the real logic.
+     *   - super.xxx() calls inside an overridden method run the parent's code → control
+     *     that path via dependency mocks (the parent's deps), not by stubbing the method.
+     *   - Inherited non-overridden methods → emit as commented hints only.
      */
     protected String buildSuperClassStubs(ClassMetadata m, int indent) {
         if (!m.hasSuperClass()) return "";
         StringBuilder sb = new StringBuilder();
 
-        // Collect all overridden method names for dedup
         Set<String> overriddenNames = m.overriddenMethods().stream()
                 .map(MethodMetadata::name)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        // ── A) Overridden methods — active stubs on spy ──────────────────────
-        if (!m.overriddenMethods().isEmpty()) {
-            sb.append(i(indent)).append("// A) Overridden methods from ").append(m.superClassName())
-              .append(" — stub on spy to isolate ClassA logic\n");
-        }
+        // ── Overridden methods — DO NOT STUB (they are the methods under test) ──
+        // For super.xxx() calls, the parent logic runs; note it so the developer
+        // knows to control the parent's dependencies, not stub the method itself.
         for (MethodMetadata mm : m.overriddenMethods()) {
-            sb.append(emitSpyStub(mm, "subject", indent, "", m));
-
-            // super.xxx() calls within overridden method — also stub on spy
             if (mm.hasSuperCalls()) {
                 for (String superCall : mm.superMethodCalls()) {
-                    if (mm.name().equals(superCall)) {
-                        sb.append(emitSpyStub(mm, "subject", indent,
-                                " // super." + superCall + "() — prevent real " + m.superClassName() + " execution", m));
-                    } else {
-                        sb.append(i(indent))
-                          .append("// TODO: stub super.").append(superCall)
-                          .append("() — doReturn(...).when(subject).").append(superCall).append("(...);\n");
-                    }
+                    sb.append(i(indent))
+                      .append("// ").append(mm.name()).append("() calls super.").append(superCall)
+                      .append("() — parent ").append(m.superClassName())
+                      .append(" logic runs; control it via the parent's dependency mocks above\n");
                 }
             }
         }
 
-        // ── B) Inherited non-overridden methods — stub to prevent real ClassB execution ──
-        // Also skip parent methods where ClassA has its own method with the same name
-        // (overloaded — different params, no @Override). ClassA's dispatch routes to its
-        // own version; the parent's version with a different signature won't be invoked.
+        // Skip parent methods where ClassA has its own same-name method (overload).
         Set<String> ownMethodNames = m.methods().stream()
                 .map(MethodMetadata::name)
                 .collect(Collectors.toSet());
@@ -502,19 +487,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .flatMap(mm -> mm.helperMethodCalls().stream())
                 .collect(Collectors.toSet());
 
-        // ── B) Inherited non-overridden methods — emit as COMMENTS only ────────
-        // Generic rule: inherited parent methods are NEVER emitted as active stubs.
-        //
-        // Reason: access modifier (protected) and package differences cannot be
-        // reliably determined at generation time for all project structures.
-        // Calling subject.protectedMethod() from the test class compiles only when
-        // the test is in the SAME package as the declaring class — which is not
-        // guaranteed when the parent is in a framework or base package.
-        //
-        // Category A (@Override methods) remain active — those are ClassA's own
-        // methods, always accessible from ClassA's test package.
-        //
-        // Uncomment any stub below if the real method causes issues during tests.
+        // ── Inherited non-overridden methods — emit as COMMENTS only ───────────
+        // Inherited parent methods are NEVER emitted as active stubs:
+        //  - protected-access + package differences can't be reliably resolved
+        //  - the method under test is never among these (it's overridden, handled above)
+        // Uncomment a hint below only if real parent execution causes test issues.
         if (m.hasParentChain()) {
             for (int level = 0; level < m.parentChain().size(); level++) {
                 ClassMetadata parent = m.parentChain().get(level);
@@ -529,7 +506,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
                 if (!inheritedMethods.isEmpty()) {
                     sb.append(i(indent))
-                      .append("// B) Inherited non-overridden methods from ").append(parent.className())
+                      .append("// Inherited from ").append(parent.className())
                       .append(" — uncomment if real parent execution causes issues:\n");
                     for (MethodMetadata mm : inheritedMethods) {
                         String matchers = mm.parameters().stream()
