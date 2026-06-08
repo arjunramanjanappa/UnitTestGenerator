@@ -632,20 +632,25 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      *   - Having a superclass alone is NOT enough â€” only spy if there are actual calls
      */
     protected boolean requiresSpyPattern(ClassMetadata m) {
-        // a) any method body contains super.xxx() calls
-        boolean hasSuperCalls = m.methods().stream().anyMatch(MethodMetadata::hasSuperCalls);
-        if (hasSuperCalls) return true;
-
-        // b) any testable method calls other public/protected methods in THIS class
-        // (private methods can't be stubbed by Mockito â€” spy only helps for public/protected helpers)
-        Set<String> stubbableOwnMethods = m.methods().stream()
-                .filter(mm -> mm.isPublic() || mm.isProtected())
-                .map(MethodMetadata::name)
-                .collect(Collectors.toSet());
-        return m.methods().stream()
-                .filter(MethodMetadata::isTestable)
-                .flatMap(mm -> mm.helperMethodCalls().stream())
-                .anyMatch(stubbableOwnMethods::contains);
+        // DISABLED â€” always use @InjectMocks. The spy pattern caused three runtime defects:
+        //
+        //   1) Repositories mocked but never injected â†’ NullPointerException.
+        //      The spy path only ReflectionTestUtils-injected calledFieldNames(m); any
+        //      other @Mock dependency stayed null on the subject. @InjectMocks injects
+        //      EVERY declared @Mock by type/name, so no dependency is left unwired.
+        //
+        //   2) Stubbing methods that aren't used.
+        //      buildHelperMethodStubs / buildSuperClassStubs stubbed internal and parent
+        //      methods in setUp() even when a given test path never calls them.
+        //
+        //   3) Blocking real logic.
+        //      lenient().doReturn(...).when(subject).helper() replaced the real helper
+        //      implementation, so the unit test exercised a stub instead of the code.
+        //
+        // With @InjectMocks the real subject runs its real internal/parent logic, and we
+        // mock only the external dependencies that the flow actually calls (stubbed at the
+        // call site in each test, AFTER confirming the call exists in the method body).
+        return false;
     }
 
     /**
