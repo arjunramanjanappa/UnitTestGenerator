@@ -196,6 +196,13 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             m.appContextRepos().forEach(sla -> usedSimpleNames.add(sla.repoType()));
         }
 
+        // Static service-locator bean types (ApplicationContextBean.getBean(X.class))
+        // — both the bean type X (mocked) and the locator class need importing.
+        if (usesStaticBeanLocator(m)) {
+            usedSimpleNames.addAll(beanLocatorTypes(m));
+            usedSimpleNames.add(staticBeanLocatorClass(m));
+        }
+
         // Field-call return types â€” used in mock(ReturnType.class) stubs in success tests.
         // Covers interfaces/entities returned by repo/dao methods that we mock.
         if (m.fieldCallReturnTypes() != null) {
@@ -353,6 +360,23 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 sb.append(i(indent)).append("@Mock\n");
                 sb.append(i(indent)).append("private ").append(sla.repoType())
                   .append(" ").append(sla.fieldName()).append("; // via ApplicationContext.getBean()\n\n");
+            }
+        }
+
+        // Static getBean(X.class) locator: declare a @Mock for each requested bean type,
+        // returned by the mockStatic stub inside each test.
+        if (usesStaticBeanLocator(m)) {
+            Set<String> already = new HashSet<>();
+            if (m.hasAppContextRepos())
+                m.appContextRepos().forEach(s -> already.add(s.repoType()));
+            if (m.hasServiceLocatorRepos())
+                m.serviceLocatorRepos().forEach(s -> already.add(s.repoType()));
+            for (String t : beanLocatorTypes(m)) {
+                if (!already.add(t)) continue;
+                sb.append(i(indent)).append("@Mock\n");
+                sb.append(i(indent)).append("private ").append(t)
+                  .append(" ").append(beanMockName(t)).append("; // via ").append(staticBeanLocatorClass(m))
+                  .append(".getBean()\n\n");
             }
         }
         return sb.toString();
@@ -653,12 +677,80 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return false;
     }
 
+    // ── Static service-locator (ApplicationContextBean.getBean) support ─────────
+
+    /**
+     * Detects the STATIC service-locator pattern:  {@code ApplicationContextBean.getBean(X.class)}.
+     *
+     * This is fundamentally different from an injected {@code ApplicationContext} field:
+     * the beans are fetched from a STATIC accessor class, so @InjectMocks injects nothing
+     * and the real Spring lookup runs at test time → bean-not-found → NullPointerException.
+     *
+     * Returns the static locator class name (e.g. "ApplicationContextBean") or null.
+     */
+    protected String staticBeanLocatorClass(ClassMetadata m) {
+        for (MethodMetadata mm : m.methods()) {
+            if (mm.staticCallTokens() == null) continue;
+            for (String tok : mm.staticCallTokens()) {            // format: Class.method:argCount
+                int dot = tok.indexOf('.');
+                int colon = tok.lastIndexOf(':');
+                if (dot > 0 && colon > dot && tok.substring(dot + 1, colon).equals("getBean")) {
+                    return tok.substring(0, dot);
+                }
+            }
+        }
+        return null;
+    }
+
+    /** True when the class resolves dependencies via a static getBean(...) locator. */
+    protected boolean usesStaticBeanLocator(ClassMetadata m) {
+        return staticBeanLocatorClass(m) != null && !beanLocatorTypes(m).isEmpty();
+    }
+
+    /** Distinct bean types requested via getBean(X.class) across all methods. */
+    protected List<String> beanLocatorTypes(ClassMetadata m) {
+        return m.methods().stream()
+                .filter(mm -> mm.getBeanCallTypes() != null)
+                .flatMap(mm -> mm.getBeanCallTypes().stream())
+                .distinct().toList();
+    }
+
+    /** Mock variable name for a bean type, e.g. "PayeeDao" → "payeeDao". */
+    protected String beanMockName(String type) {
+        return com.testgen.parser.ServiceLocatorAccess.toFieldName(type);
+    }
+
+    /**
+     * Opens a try-with-resources MockedStatic block that mocks the static locator and
+     * stubs each getBean(X.class) call to return the corresponding @Mock bean. Every
+     * statement of the test body must live inside this block so the mocked static is
+     * active while the subject runs.
+     */
+    protected String beanLocatorOpen(ClassMetadata m, MethodMetadata mm, String locator, int indent) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(i(indent)).append("try (MockedStatic<").append(locator)
+          .append("> _ctx = mockStatic(").append(locator).append(".class)) {\n");
+        List<String> types = (mm.getBeanCallTypes() != null && !mm.getBeanCallTypes().isEmpty())
+                ? mm.getBeanCallTypes() : beanLocatorTypes(m);
+        for (String t : types) {
+            sb.append(i(indent + 1)).append("_ctx.when(() -> ").append(locator)
+              .append(".getBean(").append(t).append(".class)).thenReturn(")
+              .append(beanMockName(t)).append(");\n");
+        }
+        return sb.toString();
+    }
+
     /**
      * Emits the subject field declaration for the Unit class.
      * When @InjectMocks is used, also emits the @InjectMocks annotation.
      */
     protected String buildSubjectDeclaration(ClassMetadata m, int indent) {
         String typeName = m.className();
+        if (usesStaticBeanLocator(m)) {
+            // Static getBean locator → @InjectMocks can't wire anything; instantiate
+            // directly in setUp() and feed beans via mockStatic in each test.
+            return i(indent) + "private " + typeName + " subject;\n\n";
+        }
         if (requiresSpyPattern(m)) {
             return i(indent) + "private " + typeName + " subject;\n\n";
         } else {
@@ -675,10 +767,18 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     protected String buildBeforeEach(ClassMetadata m, String subject, boolean usesMockBeans, int indent) {
         StringBuilder sb = new StringBuilder();
         boolean useSpy = !usesMockBeans && requiresSpyPattern(m);
+        boolean newInstance = !usesMockBeans && usesStaticBeanLocator(m);
 
         sb.append(i(indent)).append("@BeforeEach\n");
         // throws Exception: required when parent/helper stubs call methods that declare checked exceptions
         sb.append(i(indent)).append("void setUp() throws Exception {\n");
+
+        if (newInstance) {
+            // No injectable fields — beans come from the static getBean locator, mocked
+            // per-test via mockStatic. Just build the real subject here.
+            sb.append(i(indent + 1)).append(subject).append(" = new ")
+              .append(m.className()).append("();\n");
+        }
 
         if (useSpy) {
             sb.append(i(indent + 1)).append(subject).append(" = spy(new ")
@@ -1432,21 +1532,43 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         String paramSuffix  = buildParamSuffix(mm);
         String throwsClause = checkedThrowsClause(mm);
 
+        // Static getBean locator: the whole test body must run inside a mockStatic block
+        // so beans resolve to mocks instead of hitting the real (absent) Spring context.
+        String locator = usesStaticBeanLocator(m) ? staticBeanLocatorClass(m) : null;
+        int bodyIndent = locator != null ? indent + 2 : indent + 1;
+
         // â”€â”€ 1 SUCCESS test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ")
           .append(convention.unitTestMethod(mm.name(), "success", paramSuffix))
           .append("()").append(throwsClause).append(" {\n");
-        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
+        if (locator != null) sb.append(beanLocatorOpen(m, mm, locator, indent + 1));
+        buildParamSetup(mm, sb, bodyIndent, m.concreteClassNames(), m.paramTypeRegistry());
         // Guard null-checks: stub param getters so the happy path executes (no early throw)
-        sb.append(buildConditionGuardStubs(mm, m, indent + 1));
+        sb.append(buildConditionGuardStubs(mm, m, bodyIndent));
         // Stub non-void dependency calls so the method produces a non-null result
-        sb.append(buildFieldCallStubs(mm, m, indent + 1));
-        if (mm.isProtected()) buildReflectionCall(mm, subject, sb, indent + 1);
-        else buildDirectCall(mm, subject, sb, indent + 1);
-        // Real assertion(s): verify dependency interactions + assert the result.
-        sb.append(buildSuccessAssertions(mm, m, indent + 1));
+        sb.append(buildFieldCallStubs(mm, m, bodyIndent));
+        if (mm.isProtected()) buildReflectionCall(mm, subject, sb, bodyIndent);
+        else buildDirectCall(mm, subject, sb, bodyIndent);
+        if (locator != null) {
+            // Real assertion: the static locator was invoked for each requested bean.
+            List<String> types = (mm.getBeanCallTypes() != null && !mm.getBeanCallTypes().isEmpty())
+                    ? mm.getBeanCallTypes() : beanLocatorTypes(m);
+            for (String t : types) {
+                sb.append(i(bodyIndent)).append("_ctx.verify(() -> ").append(locator)
+                  .append(".getBean(").append(t).append(".class));\n");
+            }
+            sb.append(i(indent + 1)).append("}\n");
+        } else {
+            // Real assertion(s): verify dependency interactions + assert the result.
+            sb.append(buildSuccessAssertions(mm, m, bodyIndent));
+        }
         sb.append(i(indent)).append("}\n\n");
+
+        // Static-locator methods: the wrapped success test is the safe, green unit test.
+        // Exception/branch/boundary/static variants would each need the same wrapping and
+        // risk hitting the unstubbed bean — skip them (execution safety over coverage).
+        if (locator != null) return sb.toString();
 
         // â”€â”€ 1 EXCEPTION test â€” only if we know a concrete dependency method to throw from â”€â”€
         String primaryException = primaryException(mm);
