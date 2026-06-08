@@ -376,7 +376,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 sb.append(i(indent)).append("@Mock\n");
                 sb.append(i(indent)).append("private ").append(t)
                   .append(" ").append(beanMockName(t)).append("; // via ").append(staticBeanLocatorClass(m))
-                  .append(".getBean()\n\n");
+                  .append(".").append(staticBeanLocatorMethod(m)).append("()\n\n");
             }
         }
         return sb.toString();
@@ -689,17 +689,37 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * Returns the static locator class name (e.g. "ApplicationContextBean") or null.
      */
     protected String staticBeanLocatorClass(ClassMetadata m) {
+        String[] cm = staticBeanLocator(m);
+        return cm == null ? null : cm[0];
+    }
+
+    /** The static accessor method name actually used, e.g. "getBean" or "getService". */
+    protected String staticBeanLocatorMethod(ClassMetadata m) {
+        String[] cm = staticBeanLocator(m);
+        return cm == null ? null : cm[1];
+    }
+
+    /** Returns [className, methodName] of the static bean-locator call, or null. */
+    private String[] staticBeanLocator(ClassMetadata m) {
         for (MethodMetadata mm : m.methods()) {
             if (mm.staticCallTokens() == null) continue;
             for (String tok : mm.staticCallTokens()) {            // format: Class.method:argCount
                 int dot = tok.indexOf('.');
                 int colon = tok.lastIndexOf(':');
-                if (dot > 0 && colon > dot && tok.substring(dot + 1, colon).equals("getBean")) {
-                    return tok.substring(0, dot);
+                if (dot > 0 && colon > dot) {
+                    String method = tok.substring(dot + 1, colon);
+                    if (isBeanLocatorMethod(method)) {
+                        return new String[]{tok.substring(0, dot), method};
+                    }
                 }
             }
         }
         return null;
+    }
+
+    /** Mirrors JavaClassParser.isBeanLocatorMethod — keep both in sync. */
+    private boolean isBeanLocatorMethod(String name) {
+        return "getBean".equals(name) || "getService".equals(name);
     }
 
     /** True when the class resolves dependencies via a static getBean(...) locator. */
@@ -728,13 +748,14 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      */
     protected String beanLocatorOpen(ClassMetadata m, MethodMetadata mm, String locator, int indent) {
         StringBuilder sb = new StringBuilder();
+        String accessor = staticBeanLocatorMethod(m);
         sb.append(i(indent)).append("try (MockedStatic<").append(locator)
           .append("> _ctx = mockStatic(").append(locator).append(".class)) {\n");
         List<String> types = (mm.getBeanCallTypes() != null && !mm.getBeanCallTypes().isEmpty())
                 ? mm.getBeanCallTypes() : beanLocatorTypes(m);
         for (String t : types) {
             sb.append(i(indent + 1)).append("_ctx.when(() -> ").append(locator)
-              .append(".getBean(").append(t).append(".class)).thenReturn(")
+              .append(".").append(accessor).append("(").append(t).append(".class)).thenReturn(")
               .append(beanMockName(t)).append(");\n");
         }
         return sb.toString();
@@ -1554,9 +1575,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             // Real assertion: the static locator was invoked for each requested bean.
             List<String> types = (mm.getBeanCallTypes() != null && !mm.getBeanCallTypes().isEmpty())
                     ? mm.getBeanCallTypes() : beanLocatorTypes(m);
+            String accessor = staticBeanLocatorMethod(m);
             for (String t : types) {
                 sb.append(i(bodyIndent)).append("_ctx.verify(() -> ").append(locator)
-                  .append(".getBean(").append(t).append(".class));\n");
+                  .append(".").append(accessor).append("(").append(t).append(".class));\n");
             }
             sb.append(i(indent + 1)).append("}\n");
         } else {

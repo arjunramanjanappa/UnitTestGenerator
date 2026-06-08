@@ -334,10 +334,12 @@ public class JavaClassParser {
                 .distinct()
                 .toList();
 
-        // Detect ApplicationContext.getBean(X.class) / getBean("name", X.class) patterns
+        // Detect service-locator lookups by Class arg, e.g.
+        //   ApplicationContext.getBean(X.class) / getBean("name", X.class)
+        //   ApplicationContextBean.getService(X.class)
         // These represent DAO/service lookups via Spring context — need separate mocks
         List<String> getBeanTypes = method.findAll(MethodCallExpr.class).stream()
-                .filter(call -> call.getNameAsString().equals("getBean")
+                .filter(call -> isBeanLocatorMethod(call.getNameAsString())
                         && !call.getArguments().isEmpty())
                 .flatMap(call -> call.getArguments().stream())
                 .filter(arg -> arg instanceof ClassExpr)
@@ -371,6 +373,14 @@ public class JavaClassParser {
                 conditionScenarios, constructedTypes, castToTypes, repoMethodCallTokens,
                 accessedFields, getBeanTypes, fieldCallTokens
         );
+    }
+
+    /**
+     * Service-locator accessor methods that resolve a typed bean from a Class argument,
+     * e.g. ctx.getBean(X.class) or ApplicationContextBean.getService(X.class).
+     */
+    static boolean isBeanLocatorMethod(String name) {
+        return "getBean".equals(name) || "getService".equals(name);
     }
 
     // ── Condition scenario extraction ────────────────────────────────────────
