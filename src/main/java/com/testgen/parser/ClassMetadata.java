@@ -31,7 +31,8 @@ public record ClassMetadata(
         List<ServiceLocatorAccess> serviceLocatorRepos, // @Repository types obtained via service locator cast
         Map<String, String> resolvedStaticTypes,     // "ClassName.methodName" → returnType from source
         List<ServiceLocatorAccess> appContextRepos, // repos obtained via ApplicationContext.getBean(X.class)
-        Map<String, String> fieldCallReturnTypes    // "fieldName.methodName" → returnType (for stubbing mock returns)
+        Map<String, String> fieldCallReturnTypes,    // "fieldName.methodName" → returnType (for stubbing mock returns)
+        Map<String, String> fieldCallMatchers        // "fieldName.methodName" → "anyString(), anyInt()" (type-aware matchers)
 ) {
     public String fullClassName() {
         return packageName.isEmpty() ? className : packageName + "." + className;
@@ -93,49 +94,49 @@ public record ClassMetadata(
         return new ClassMetadata(className, packageName, sourceFilePath, type,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes);
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes, fieldCallMatchers);
     }
 
     public ClassMetadata withSpringBootVersion(String version) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                version, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes);
+                version, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes, fieldCallMatchers);
     }
 
     public ClassMetadata withParentChain(List<ClassMetadata> chain) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, chain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes);
+                springBootVersion, chain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes, fieldCallMatchers);
     }
 
     public ClassMetadata withInterfaceDefaultMethods(List<MethodMetadata> defaults) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, defaults, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes);
+                springBootVersion, parentChain, defaults, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes, fieldCallMatchers);
     }
 
     public ClassMetadata withConcreteClassNames(Set<String> names) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, names, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes);
+                springBootVersion, parentChain, interfaceDefaultMethods, names, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes, fieldCallMatchers);
     }
 
     public ClassMetadata withParamTypeRegistry(Map<String, ClassMetadata> registry) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, registry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes);
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, registry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes, fieldCallMatchers);
     }
 
     public ClassMetadata withEntityConstructions(Set<String> entities) {
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entities, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes);
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entities, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes, fieldCallMatchers);
     }
 
     public boolean hasEntityConstructions() {
@@ -151,7 +152,7 @@ public record ClassMetadata(
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
                 springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames,
-                paramTypeRegistry, entityConstructions, serviceLocatorRepos, types, appContextRepos, fieldCallReturnTypes);
+                paramTypeRegistry, entityConstructions, serviceLocatorRepos, types, appContextRepos, fieldCallReturnTypes, fieldCallMatchers);
     }
 
     public boolean hasAppContextRepos() {
@@ -163,7 +164,7 @@ public record ClassMetadata(
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
                 springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames,
-                paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, repos, fieldCallReturnTypes);
+                paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, repos, fieldCallReturnTypes, fieldCallMatchers);
     }
 
     public ClassMetadata withFieldCallReturnTypes(Map<String, String> types) {
@@ -171,7 +172,15 @@ public record ClassMetadata(
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
                 springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames,
-                paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, types);
+                paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, types, fieldCallMatchers);
+    }
+
+    public ClassMetadata withFieldCallMatchers(Map<String, String> matchers) {
+        return new ClassMetadata(className, packageName, sourceFilePath, classType,
+                annotations, fields, methods, imports, superClassName, interfaces,
+                isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames,
+                paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes, matchers);
     }
 
     public ClassMetadata withServiceLocatorRepos(List<ServiceLocatorAccess> repos) {
@@ -179,7 +188,7 @@ public record ClassMetadata(
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
                 springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames,
-                paramTypeRegistry, entityConstructions, repos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes);
+                paramTypeRegistry, entityConstructions, repos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes, fieldCallMatchers);
     }
 
     /** Override package — used when placing companion TestData in a different package. */
@@ -187,7 +196,7 @@ public record ClassMetadata(
         return new ClassMetadata(className, pkg, sourceFilePath, classType,
                 annotations, fields, methods, imports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes);
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes, fieldCallMatchers);
     }
 
     /** Override imports — used to supply the owning class's import list for FQN resolution. */
@@ -195,6 +204,6 @@ public record ClassMetadata(
         return new ClassMetadata(className, packageName, sourceFilePath, classType,
                 annotations, fields, methods, newImports, superClassName, interfaces,
                 isAbstract, isInterface, hasLombok, hasBuilder, genericTypeParams,
-                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes);
+                springBootVersion, parentChain, interfaceDefaultMethods, concreteClassNames, paramTypeRegistry, entityConstructions, serviceLocatorRepos, resolvedStaticTypes, appContextRepos, fieldCallReturnTypes, fieldCallMatchers);
     }
 }

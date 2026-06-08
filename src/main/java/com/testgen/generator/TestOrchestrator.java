@@ -139,6 +139,7 @@ public class TestOrchestrator {
                 // Resolve return types of methods called on injected mock fields
                 // (so success tests can stub them to return non-null and assertions pass)
                 meta = meta.withFieldCallReturnTypes(resolveFieldCallReturnTypes(meta, fileIndex));
+                meta = meta.withFieldCallMatchers(resolveFieldCallMatchers(meta, fileIndex));
 
                 TestStrategy strategy = pickStrategy(meta, xmlRoutes);
                 // Generate ONLY the test class â€” no separate TestData files.
@@ -370,7 +371,7 @@ public class TestOrchestrator {
                 superName, List.of(),
                 Modifier.isAbstract(clazz.getModifiers()), clazz.isInterface(),
                 false, false, List.of(), null,
-                List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of(), List.of(), Map.of()
+                List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of(), List.of(), Map.of(), Map.of()
         );
     }
 
@@ -427,6 +428,72 @@ public class TestOrchestrator {
                     } catch (Exception ignored) {}
                 });
         return result.isEmpty() ? Map.of() : result;
+    }
+
+    /**
+     * Resolves type-aware Mockito matchers for each injected-field method call.
+     * "payeeRepo:findById:1" where findById(String) -> "payeeRepo.findById" -> "anyString()".
+     * findByKey(String,int) -> "anyString(), anyInt()". Prevents primitive matcher NPEs.
+     */
+    private Map<String, String> resolveFieldCallMatchers(ClassMetadata m, Map<String, Path> fileIndex) {
+        Map<String, String> result = new HashMap<>();
+        Map<String, String> fieldTypes = new HashMap<>();
+        for (com.testgen.parser.FieldMetadata f : m.fields()) {
+            fieldTypes.put(f.name(), f.simpleType());
+        }
+        m.methods().stream()
+                .filter(mm -> mm.fieldCallTokens() != null)
+                .flatMap(mm -> mm.fieldCallTokens().stream())
+                .distinct()
+                .forEach(token -> {
+                    String[] parts = token.split(":");
+                    if (parts.length != 3) return;
+                    String fieldName = parts[0], methodName = parts[1];
+                    int argCount = Integer.parseInt(parts[2]);
+                    String key = fieldName + "." + methodName;
+                    if (result.containsKey(key)) return;
+                    String type = fieldTypes.get(fieldName);
+                    if (type == null) return;
+                    Path src = fileIndex.get(type);
+                    if (src == null) return;
+                    try {
+                        com.github.javaparser.ast.CompilationUnit cu =
+                                com.github.javaparser.StaticJavaParser.parse(src);
+                        cu.findFirst(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.class)
+                                .ifPresent(cls -> cls.getMethods().stream()
+                                        .filter(md -> md.getNameAsString().equals(methodName))
+                                        .filter(md -> md.getParameters().size() == argCount)
+                                        .findFirst()
+                                        .ifPresent(md -> {
+                                            String matchers = md.getParameters().stream()
+                                                    .map(p -> mockitoMatcherFor(p.getTypeAsString()))
+                                                    .collect(Collectors.joining(", "));
+                                            result.put(key, matchers);
+                                        }));
+                    } catch (Exception ignored) {}
+                });
+        return result.isEmpty() ? Map.of() : result;
+    }
+
+    /**
+     * Mockito matcher for a parameter type. Only PRIMITIVES use anyInt()/anyLong()/etc.
+     * (any() would NPE on unboxing). Everything else — including String — uses any(),
+     * because any() also matches null (deep-stub getters return null for final types
+     * like String), whereas anyString() would NOT match a null argument.
+     */
+    private String mockitoMatcherFor(String rawType) {
+        String type = rawType.replaceAll("<.*>", "").trim();
+        return switch (type) {
+            case "int"     -> "anyInt()";
+            case "long"    -> "anyLong()";
+            case "double"  -> "anyDouble()";
+            case "float"   -> "anyFloat()";
+            case "boolean" -> "anyBoolean()";
+            case "byte"    -> "anyByte()";
+            case "short"   -> "anyShort()";
+            case "char"    -> "anyChar()";
+            default        -> "any()";
+        };
     }
 
     /**

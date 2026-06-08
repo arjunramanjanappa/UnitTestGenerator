@@ -191,6 +191,26 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             usedSimpleNames.addAll(m.entityConstructions());
         }
 
+        // App-context repo types (separate @Mock fields)
+        if (m.hasAppContextRepos()) {
+            m.appContextRepos().forEach(sla -> usedSimpleNames.add(sla.repoType()));
+        }
+
+        // Field-call return types — used in mock(ReturnType.class) stubs in success tests.
+        // Covers interfaces/entities returned by repo/dao methods that we mock.
+        if (m.fieldCallReturnTypes() != null) {
+            m.fieldCallReturnTypes().values().forEach(rt -> {
+                if (rt == null) return;
+                String raw = rt.replaceAll("<.*>", "").trim();
+                if (!raw.isEmpty()) usedSimpleNames.add(raw);
+                if (rt.contains("<")) {                       // inner of Optional<X>/List<X>
+                    String inner = rt.substring(rt.indexOf('<') + 1, rt.lastIndexOf('>'))
+                            .replaceAll("<.*>", "").trim();
+                    if (!inner.isEmpty()) usedSimpleNames.add(inner);
+                }
+            });
+        }
+
         // Build FQN → simple-name map.
         // RULE: always infer from source class — never guess packages.
         // Priority: explicit imports > static member imports > same-package types
@@ -989,6 +1009,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         // Drive the condition via a getter stub on the mock
         sb.append(i(indent + 1)).append("when(").append(sc.paramName()).append(".get")
           .append(cap(sc.fieldName())).append("()).thenReturn(").append(sc.trueSetExpr()).append(");\n");
+        sb.append(buildFieldCallStubs(mm, m, indent + 1));
         if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
         sb.append(buildSuccessAssertions(mm, m, indent + 1));
         sb.append(i(indent)).append("}\n\n");
@@ -1015,6 +1036,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
           .append(" = mock(").append(sc.paramType()).append(".class, RETURNS_DEEP_STUBS);\n");
         sb.append(i(indent + 1)).append("when(").append(sc.paramName()).append(".get")
           .append(cap(sc.fieldName())).append("()).thenReturn(").append(sc.trueSetExpr()).append(");\n");
+        sb.append(buildFieldCallStubs(mm, m, indent + 1));
         if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
         sb.append(buildSuccessAssertions(mm, m, indent + 1));
         sb.append(i(indent)).append("}\n\n");
@@ -1046,14 +1068,23 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             if (JDK_CLASSES.contains(staticClass)) continue;
 
             String methodName = null, retType = null;
+            int argCount = 0;
             for (String token : mm.staticCallTokens()) {
                 if (!token.startsWith(staticClass + ".")) continue;
                 int colon = token.lastIndexOf(':');
                 String mName = token.substring(staticClass.length() + 1, colon);
                 String rt = m.resolvedStaticTypes().get(staticClass + "." + mName);
-                if (rt != null && !"void".equals(rt)) { methodName = mName; retType = rt; break; }
+                if (rt != null && !"void".equals(rt)) {
+                    methodName = mName; retType = rt;
+                    argCount = Integer.parseInt(token.substring(colon + 1));
+                    break;
+                }
             }
             if (methodName == null) continue; // nothing resolved for this class
+
+            // Match the static method's real arity: N any() matchers (or none for 0 args)
+            String matchers = java.util.stream.IntStream.range(0, argCount)
+                    .mapToObj(x -> "any()").collect(Collectors.joining(", "));
 
             String throwsDecl = checkedThrowsClause(mm);
             String testName = convention.unitTestMethod(mm.name(),
@@ -1064,11 +1095,15 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             sb.append(i(indent + 1)).append("try (MockedStatic<").append(staticClass)
               .append("> mockedStatic = mockStatic(").append(staticClass).append(".class)) {\n");
             sb.append(i(indent + 2)).append("mockedStatic.when(() -> ").append(staticClass).append(".")
-              .append(methodName).append("(any())).thenReturn(").append(typedReturnValue(retType, m)).append(");\n");
+              .append(methodName).append("(").append(matchers).append(")).thenReturn(")
+              .append(typedReturnValue(retType, m)).append(");\n");
             buildParamSetup(mm, sb, indent + 2, m.concreteClassNames(), m.paramTypeRegistry());
+            // Also stub the method's dependency calls + null-check guards so result is non-null
+            sb.append(buildConditionGuardStubs(mm, m, indent + 2));
+            sb.append(buildFieldCallStubs(mm, m, indent + 2));
             if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 2);
             sb.append(i(indent + 2)).append("mockedStatic.verify(() -> ").append(staticClass).append(".")
-              .append(methodName).append("(any()));\n");
+              .append(methodName).append("(").append(matchers).append("));\n");
             if (mm.hasReturnValue()) sb.append(i(indent + 2)).append("assertNotNull(result);\n");
             sb.append(i(indent + 1)).append("}\n");
             sb.append(i(indent)).append("}\n\n");
@@ -1561,13 +1596,8 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         boolean emitted = false;
 
         for (String[] fc : injectedFieldCalls(mm, m)) {
-            // fc = [fieldName, methodName, argCount]
-            String matchers = "any()".repeat(0);
-            int argc = Integer.parseInt(fc[2]);
-            matchers = java.util.stream.IntStream.range(0, argc)
-                    .mapToObj(x -> "any()").collect(Collectors.joining(", "));
             sb.append(i(indent)).append("verify(").append(fc[0]).append(").")
-              .append(fc[1]).append("(").append(matchers).append(");\n");
+              .append(fc[1]).append("(").append(fcMatchers(fc, m)).append(");\n");
             emitted = true;
         }
 
@@ -1600,12 +1630,9 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             String key = fc[0] + "." + fc[1];
             String retType = m.fieldCallReturnTypes().get(key);
             if (retType == null || "void".equals(retType)) continue;
-            int argc = Integer.parseInt(fc[2]);
-            String matchers = java.util.stream.IntStream.range(0, argc)
-                    .mapToObj(x -> "any()").collect(Collectors.joining(", "));
             String retVal = stubReturnValue(retType, m);
             sb.append(i(indent)).append("when(").append(fc[0]).append(".").append(fc[1])
-              .append("(").append(matchers).append(")).thenReturn(").append(retVal).append(");\n");
+              .append("(").append(fcMatchers(fc, m)).append(")).thenReturn(").append(retVal).append(");\n");
         }
         return sb.toString();
     }
@@ -1657,6 +1684,20 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * Returns [fieldName, methodName, argCount] for each method call on an INJECTED MOCK
      * field made by mm. Filters fieldCallTokens to scopes matching a mock candidate name.
      */
+    /**
+     * Type-aware matchers for an injected-field call: resolved from the field type's
+     * method signature when available (anyString(), anyInt()), else N generic any().
+     */
+    private String fcMatchers(String[] fc, ClassMetadata m) {
+        String key = fc[0] + "." + fc[1];
+        if (m.fieldCallMatchers() != null && m.fieldCallMatchers().containsKey(key)) {
+            return m.fieldCallMatchers().get(key);
+        }
+        int argc = Integer.parseInt(fc[2]);
+        return java.util.stream.IntStream.range(0, argc)
+                .mapToObj(x -> "any()").collect(Collectors.joining(", "));
+    }
+
     private List<String[]> injectedFieldCalls(MethodMetadata mm, ClassMetadata m) {
         if (mm.fieldCallTokens() == null) return List.of();
         Set<String> mockNames = m.mockCandidates().stream()
@@ -1731,10 +1772,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     private String[] pickExceptionTriggerCall(MethodMetadata mm, ClassMetadata m) {
         // 1) A method actually called on an injected @Mock field by mm
         for (String[] fc : injectedFieldCalls(mm, m)) {
-            int argc = Integer.parseInt(fc[2]);
-            String matchers = java.util.stream.IntStream.range(0, argc)
-                    .mapToObj(x -> "any()").collect(Collectors.joining(", "));
-            return new String[]{ fc[0], fc[1], matchers };
+            return new String[]{ fc[0], fc[1], fcMatchers(fc, m) };
         }
         // 2) Service-locator repo calls
         if (m.hasServiceLocatorRepos()) {
@@ -2068,19 +2106,21 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      *   String        → anyString()
      *   Object/other  → any(TypeName.class)
      */
+    // Only primitives use anyXxx() (any() would NPE on unboxing). All object types —
+    // including String and wrappers — use any(), which also matches null arguments
+    // (deep-stub getters return null for final types; anyString() would not match null).
     protected String mockitoMatcher(String rawType) {
         String type = rawType.replaceAll("<.*>", "").trim();
         return switch (type) {
-            case "int",     "Integer"   -> "anyInt()";
-            case "long",    "Long"      -> "anyLong()";
-            case "double",  "Double"    -> "anyDouble()";
-            case "float",   "Float"     -> "anyFloat()";
-            case "boolean", "Boolean"   -> "anyBoolean()";
-            case "byte",    "Byte"      -> "anyByte()";
-            case "short",   "Short"     -> "anyShort()";
-            case "char",    "Character" -> "anyChar()";
-            case "String"               -> "anyString()";
-            default                     -> "any(" + type + ".class)";
+            case "int"     -> "anyInt()";
+            case "long"    -> "anyLong()";
+            case "double"  -> "anyDouble()";
+            case "float"   -> "anyFloat()";
+            case "boolean" -> "anyBoolean()";
+            case "byte"    -> "anyByte()";
+            case "short"   -> "anyShort()";
+            case "char"    -> "anyChar()";
+            default        -> "any()";
         };
     }
 

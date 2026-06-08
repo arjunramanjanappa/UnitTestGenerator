@@ -94,7 +94,7 @@ public class JavaClassParser {
                     superClass, interfaces,
                     cls.isAbstract(), false,
                     hasLombok, hasBuilder, genericTypeParams, null,
-                    List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of(), List.of(), Map.of()  // parentChain/ifaceDefaults/concrete/paramRegistry/entities/serviceLocator/staticTypes/appCtxRepos
+                    List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of(), List.of(), Map.of(), Map.of()  // parentChain/ifaceDefaults/concrete/paramRegistry/entities/serviceLocator/staticTypes/appCtxRepos
             ));
 
         } catch (IOException e) {
