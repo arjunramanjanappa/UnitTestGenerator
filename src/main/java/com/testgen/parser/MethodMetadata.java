@@ -27,7 +27,8 @@ public record MethodMetadata(
         List<String> castToTypes,               // types used in cast expressions — potential service-locator repos
         List<String> repoMethodCallTokens,     // "RepoType|methodName|argCount" for calls on cast vars
         List<String> accessedFieldNames,       // class fields accessed inside this method (for private isolation comment)
-        List<String> getBeanCallTypes          // types passed to getBean(X.class) — ApplicationContext pattern
+        List<String> getBeanCallTypes,         // types passed to getBean(X.class) — ApplicationContext pattern
+        List<String> fieldCallTokens           // "fieldName:methodName:argCount" — calls on injected fields
 ) {
     public boolean hasReturnValue() {
         return !"void".equals(returnType);

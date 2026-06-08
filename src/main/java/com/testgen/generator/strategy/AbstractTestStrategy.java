@@ -98,16 +98,16 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                  "Short"         -> "(short) 1";
             case "char",
                  "Character"     -> "'a'";
-            case "BigDecimal"    -> "BigDecimal.ONE";
-            case "BigInteger"    -> "BigInteger.ONE";
-            case "LocalDate"     -> "LocalDate.now()";
-            case "LocalDateTime" -> "LocalDateTime.now()";
+            // Fully-qualified so no extra imports are needed in the generated test
+            case "BigDecimal"    -> "java.math.BigDecimal.ONE";
+            case "BigInteger"    -> "java.math.BigInteger.ONE";
+            case "LocalDate"     -> "java.time.LocalDate.now()";
+            case "LocalDateTime" -> "java.time.LocalDateTime.now()";
             case "LocalTime"     -> "java.time.LocalTime.now()";
             case "ZonedDateTime" -> "java.time.ZonedDateTime.now()";
             case "OffsetDateTime"-> "java.time.OffsetDateTime.now()";
             case "Instant"       -> "java.time.Instant.now()";
-            case "UUID"          -> "UUID.randomUUID()";
-            // java.sql types — no-arg constructor does NOT exist
+            case "UUID"          -> "java.util.UUID.randomUUID()";
             case "Timestamp",
                  "java.sql.Timestamp"  -> "new java.sql.Timestamp(System.currentTimeMillis())";
             case "Date",
@@ -116,11 +116,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                  "java.sql.Time"       -> "new java.sql.Time(System.currentTimeMillis())";
             case "java.util.Date"      -> "new java.util.Date()";
             case "void"          -> "";
-            case "List"          -> "List.of()";
-            case "Map"           -> "Map.of()";
-            case "Set"           -> "Set.of()";
-            case "Optional"      -> "Optional.empty()";
-            default              -> "null /* TODO: provide " + rawType + " */";
+            case "List"          -> "java.util.List.of()";
+            case "Map"           -> "java.util.Map.of()";
+            case "Set"           -> "java.util.Set.of()";
+            case "Optional"      -> "java.util.Optional.empty()";
+            default              -> "null";
         };
     }
 
@@ -279,22 +279,13 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     }
 
     protected String commonImports() {
+        // Lean import set. org.mockito.* covers Mock/Spy/InjectMocks/MockedStatic;
+        // static Mockito.* covers mock/spy/when/doThrow/verify/mockStatic/RETURNS_DEEP_STUBS.
         return "import org.junit.jupiter.api.*;\n"
              + "import org.junit.jupiter.api.extension.ExtendWith;\n"
-             + "import org.junit.jupiter.params.ParameterizedTest;\n"
-             + "import org.junit.jupiter.params.provider.CsvSource;\n"
-             + "import org.junit.jupiter.params.provider.EnumSource;\n"
              + "import org.mockito.*;\n"
              + "import org.mockito.junit.jupiter.MockitoExtension;\n"
-             + "import static org.mockito.Mockito.mockStatic;\n"
-             + "import static org.mockito.Mockito.mockConstruction;\n"
-             + "import org.mockito.MockedConstruction;\n"
-             + "import org.springframework.context.ApplicationContext;\n"
              + "import org.springframework.test.util.ReflectionTestUtils;\n"
-             + "import java.math.BigDecimal;\n"
-             + "import java.math.BigInteger;\n"
-             + "import java.time.LocalDate;\n"
-             + "import java.time.LocalDateTime;\n"
              + "import java.util.*;\n"
              + "import static org.junit.jupiter.api.Assertions.*;\n"
              + "import static org.mockito.Mockito.*;\n"
@@ -760,14 +751,12 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             // Stub the service-locator method (e.g. makeDAO) on the spy.
             // If makeDAO is from a parent class (protected, different package), calling
             // subject.makeDAO() from the test won't compile — emit as a comment.
-            String locatorStub = "lenient().doReturn(" + sla.fieldName() + ").when("
-                    + subject + ")." + sla.locatorMethod() + "(any());";
+            // Only stub when the locator method is ClassA's own (accessible from test).
+            // Parent-inherited locators are handled via the testable subclass _mockDaos map.
             if (isOwnAccessibleMethod(sla.locatorMethod(), m)) {
-                sb.append(i(indent)).append(locatorStub).append("\n");
-            } else {
-                sb.append(i(indent)).append("// ").append(locatorStub)
-                  .append(" // TODO: ").append(sla.locatorMethod())
-                  .append("() is from parent class — verify access before enabling\n");
+                sb.append(i(indent)).append("lenient().doReturn(").append(sla.fieldName())
+                  .append(").when(").append(subject).append(").").append(sla.locatorMethod())
+                  .append("(any());\n");
             }
 
             // Stub each detected method call on the repo — prevents NPE and covers DB call lines
@@ -958,79 +947,31 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     protected String buildBranchTests(MethodMetadata mm, String subject,
                                        ClassMetadata m, int indent) {
-        if (!mm.hasConditionals()) return "";
-
-        // Only generate branch tests when the condition AFFECTS observable behaviour:
-        // - method has a return value (different branch → different output), OR
-        // - method has service-locator / repo calls (different branch → different dep called)
-        // Skip branch tests for void methods with no dep interactions — not meaningful.
-        boolean affectsOutput = mm.hasReturnValue()
-                || m.hasServiceLocatorRepos()
-                || !m.mockCandidates().isEmpty();
-        if (!affectsOutput) return "";
+        // Only generate a branch test when a REAL condition scenario was detected:
+        // a parameter field is checked, a concrete value can be assigned, and the
+        // two branches differ. No scenario → no branch test (avoids fake/empty tests).
+        if (!mm.hasConditionScenarios()) return "";
+        com.testgen.parser.ConditionScenario sc = mm.conditionScenarios().get(0);
+        // Need a settable field value on both sides to be meaningful
+        boolean trueSettable  = sc.trueSetExpr()  != null && !sc.trueSetExpr().startsWith("/*");
+        boolean falseSettable = sc.falseSetExpr() != null && !sc.falseSetExpr().startsWith("/*");
+        if (!trueSettable || !falseSettable) return "";
 
         StringBuilder sb = new StringBuilder();
         String throwsDecl = checkedThrowsClause(mm);
 
-        // Only generate ONE pair per method (most impactful condition).
-        // Generating one pair per IfStmt leads to over-mocking with empty assertions.
-        if (mm.hasConditionScenarios()) {
-            // Use the first detected condition scenario only
-            com.testgen.parser.ConditionScenario sc = mm.conditionScenarios().get(0);
-            String ownerTestData = m.className() + "TestData";
-
-            // TRUE branch — inline object with condition set
-            String trueName = convention.unitTestMethod(mm.name(), "when_" + sc.trueLabel(), buildParamSuffix(mm));
-            sb.append(i(indent)).append("@Test\n");
-            sb.append(i(indent)).append("void ").append(trueName).append("()").append(throwsDecl).append(" {\n");
-            sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
-              .append(" = new ").append(sc.paramType()).append("();\n");
-            if (!sc.trueSetExpr().startsWith("null") && !sc.trueSetExpr().startsWith("/*")) {
-                sb.append(i(indent + 1)).append(sc.paramName()).append(".").append(sc.setterName())
-                  .append("(").append(sc.trueSetExpr()).append("); // condition TRUE: ").append(sc.fieldName()).append("\n");
-            }
-            if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
-            if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
-            sb.append(i(indent)).append("}\n\n");
-
-            // FALSE branch — inline object with condition set to negative value
-            String falseName = convention.unitTestMethod(mm.name(), "when_" + sc.falseLabel(), buildParamSuffix(mm));
-            sb.append(i(indent)).append("@Test\n");
-            sb.append(i(indent)).append("void ").append(falseName).append("()").append(throwsDecl).append(" {\n");
-            sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
-              .append(" = new ").append(sc.paramType()).append("();\n");
-            if (!sc.falseSetExpr().startsWith("null") && !sc.falseSetExpr().startsWith("/*")) {
-                sb.append(i(indent + 1)).append(sc.paramName()).append(".").append(sc.setterName())
-                  .append("(").append(sc.falseSetExpr()).append("); // condition FALSE: ").append(sc.fieldName()).append("\n");
-            }
-            if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
-            if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
-            sb.append(i(indent)).append("}\n\n");
-            return sb.toString();
-        }
-
-        // Generic fallback — only 1 pair, only when behaviour is affected
-        String trueName = convention.unitTestMethod(mm.name(), "when_condition_isTrue", buildParamSuffix(mm));
+        // Single representative branch test — the TRUE path (the more interesting one).
+        String trueName = convention.unitTestMethod(mm.name(), "when_" + sc.trueLabel(), buildParamSuffix(mm));
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ").append(trueName).append("()").append(throwsDecl).append(" {\n");
-        sb.append(i(indent + 1)).append("// TRUE branch — configure input/mock to trigger condition\n");
-        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
-        sb.append(i(indent + 1)).append("// Set condition field: ReflectionTestUtils.setField(subject, \"fieldName\", value);\n");
+        sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
+          .append(" = mock(").append(sc.paramType()).append(".class, RETURNS_DEEP_STUBS);\n");
+        // Drive the condition via a getter stub on the mock
+        sb.append(i(indent + 1)).append("when(").append(sc.paramName()).append(".get")
+          .append(cap(sc.fieldName())).append("()).thenReturn(").append(sc.trueSetExpr()).append(");\n");
         if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
-        if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
+        sb.append(buildSuccessAssertions(mm, m, indent + 1));
         sb.append(i(indent)).append("}\n\n");
-
-        String falseName = convention.unitTestMethod(mm.name(), "when_condition_isFalse", buildParamSuffix(mm));
-        sb.append(i(indent)).append("@Test\n");
-        sb.append(i(indent)).append("void ").append(falseName).append("()").append(throwsDecl).append(" {\n");
-        sb.append(i(indent + 1)).append("// FALSE branch — configure input/mock for the negative condition\n");
-        buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
-        sb.append(i(indent + 1)).append("// Set condition field: ReflectionTestUtils.setField(subject, \"fieldName\", value);\n");
-        if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
-        if (mm.hasReturnValue()) sb.append(i(indent + 1)).append("assertNotNull(result);\n");
-        else sb.append(i(indent + 1)).append("// TODO: verify dependency interaction for FALSE branch\n");
-        sb.append(i(indent)).append("}\n\n");
-
         return sb.toString();
     }
 
@@ -1038,21 +979,25 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     protected String buildBoundaryTests(MethodMetadata mm, String subject,
                                          ClassMetadata m, int indent) {
-        if (!mm.hasNumericComparisons()) return "";
+        // Only when a NUMERIC condition scenario is detected (real threshold + field).
+        if (!mm.hasNumericComparisons() || !mm.hasConditionScenarios()) return "";
+        com.testgen.parser.ConditionScenario sc = mm.conditionScenarios().stream()
+                .filter(s -> s.type() == com.testgen.parser.ConditionScenario.ConditionType.NUMERIC_CHECK)
+                .findFirst().orElse(null);
+        if (sc == null) return "";
+
         StringBuilder sb = new StringBuilder();
         String throwsDecl = checkedThrowsClause(mm);
-
-        for (String label : List.of("belowThreshold", "atThreshold", "aboveThreshold")) {
-            String testName = convention.unitTestMethod(mm.name(), label, buildParamSuffix(mm));
-            sb.append(i(indent)).append("@Test\n");
-            sb.append(i(indent)).append("void ").append(testName).append("()").append(throwsDecl).append(" {\n");
-            sb.append(i(indent + 1)).append("// Pattern G — boundary: '").append(label).append("'\n");
-            buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
-            sb.append(i(indent + 1)).append("// TODO: set the numeric field to the boundary value (e.g. threshold-1 / threshold / threshold+1)\n");
-            if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
-            sb.append(i(indent + 1)).append("// TODO: assert outcome for ").append(label).append("\n");
-            sb.append(i(indent)).append("}\n\n");
-        }
+        String testName = convention.unitTestMethod(mm.name(), "at_" + sc.trueLabel(), buildParamSuffix(mm));
+        sb.append(i(indent)).append("@Test\n");
+        sb.append(i(indent)).append("void ").append(testName).append("()").append(throwsDecl).append(" {\n");
+        sb.append(i(indent + 1)).append(sc.paramType()).append(" ").append(sc.paramName())
+          .append(" = mock(").append(sc.paramType()).append(".class, RETURNS_DEEP_STUBS);\n");
+        sb.append(i(indent + 1)).append("when(").append(sc.paramName()).append(".get")
+          .append(cap(sc.fieldName())).append("()).thenReturn(").append(sc.trueSetExpr()).append(");\n");
+        if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 1);
+        sb.append(buildSuccessAssertions(mm, m, indent + 1));
+        sb.append(i(indent)).append("}\n\n");
         return sb.toString();
     }
 
@@ -1072,58 +1017,44 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     protected String buildStaticMockTests(MethodMetadata mm, String subject,
                                            ClassMetadata m, int indent) {
-        if (!mm.hasStaticDependencies()) return "";
-        StringBuilder sb = new StringBuilder();
-        String throwsDecl = checkedThrowsClause(mm);
+        if (!mm.hasStaticDependencies() || mm.staticCallTokens() == null
+                || m.resolvedStaticTypes() == null) return "";
 
+        // Pick the FIRST static class that has a RESOLVED (known) non-void method.
+        // No resolved method → no static test (never mock blindly, never JDK).
         for (String staticClass : mm.staticCallClasses()) {
-            // Only mock business/external utilities — never JDK classes
             if (JDK_CLASSES.contains(staticClass)) continue;
-            // Skip if no calls detected with tokens (safety check)
-            if (mm.staticCallTokens() == null) continue;
 
-            // Only generate if we have a meaningful behavior to add (class in source or known)
-            // Skip if the class is likely a JDK utility based on lowercase package hint
-            if (staticClass.length() < 3) continue;
+            String methodName = null, retType = null;
+            for (String token : mm.staticCallTokens()) {
+                if (!token.startsWith(staticClass + ".")) continue;
+                int colon = token.lastIndexOf(':');
+                String mName = token.substring(staticClass.length() + 1, colon);
+                String rt = m.resolvedStaticTypes().get(staticClass + "." + mName);
+                if (rt != null && !"void".equals(rt)) { methodName = mName; retType = rt; break; }
+            }
+            if (methodName == null) continue; // nothing resolved for this class
 
+            String throwsDecl = checkedThrowsClause(mm);
             String testName = convention.unitTestMethod(mm.name(),
                     "with_" + staticClass + "_mocked", buildParamSuffix(mm));
+            StringBuilder sb = new StringBuilder();
             sb.append(i(indent)).append("@Test\n");
             sb.append(i(indent)).append("void ").append(testName).append("()").append(throwsDecl).append(" {\n");
             sb.append(i(indent + 1)).append("try (MockedStatic<").append(staticClass)
               .append("> mockedStatic = mockStatic(").append(staticClass).append(".class)) {\n");
-            // Generate type-aware behavior for each detected static call
-            boolean hasBehavior = false;
-            if (mm.staticCallTokens() != null) {
-                for (String token : mm.staticCallTokens()) {
-                    if (!token.startsWith(staticClass + ".")) continue;
-                    int colon = token.lastIndexOf(':');
-                    String methodName = token.substring(staticClass.length() + 1, colon);
-                    String key = staticClass + "." + methodName;
-                    String retType = m.resolvedStaticTypes() != null
-                            ? m.resolvedStaticTypes().get(key) : null;
-                    if (retType != null && !"void".equals(retType)) {
-                        String retVal = typedReturnValue(retType, m);
-                        sb.append(i(indent + 2))
-                          .append("mockedStatic.when(() -> ").append(staticClass).append(".")
-                          .append(methodName).append("(any())).thenReturn(").append(retVal).append(");\n");
-                        hasBehavior = true;
-                    }
-                }
-            }
-            if (!hasBehavior) {
-                sb.append(i(indent + 2)).append("// TODO: mockedStatic.when(() -> ").append(staticClass)
-                  .append(".method(any())).thenReturn(expectedValue);\n");
-            }
+            sb.append(i(indent + 2)).append("mockedStatic.when(() -> ").append(staticClass).append(".")
+              .append(methodName).append("(any())).thenReturn(").append(typedReturnValue(retType, m)).append(");\n");
             buildParamSetup(mm, sb, indent + 2, m.concreteClassNames(), m.paramTypeRegistry());
             if (!mm.isProtected()) buildDirectCall(mm, subject, sb, indent + 2);
-            if (mm.hasReturnValue()) {
-                sb.append(i(indent + 2)).append("assertNotNull(result);\n");
-            }
+            sb.append(i(indent + 2)).append("mockedStatic.verify(() -> ").append(staticClass).append(".")
+              .append(methodName).append("(any()));\n");
+            if (mm.hasReturnValue()) sb.append(i(indent + 2)).append("assertNotNull(result);\n");
             sb.append(i(indent + 1)).append("}\n");
             sb.append(i(indent)).append("}\n\n");
+            return sb.toString(); // only ONE static test
         }
-        return sb.toString();
+        return "";
     }
 
     // ── @Entity MockedConstruction test ─────────────────────────────────────
@@ -1560,130 +1491,258 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     protected String buildSingleTestMethod(MethodMetadata mm, String subject,
                                            ClassMetadata m, int indent) {
         StringBuilder sb = new StringBuilder();
-
-        // AOP warning — emitted before the @Test so the reader sees it immediately
-        sb.append(buildAopWarningComment(mm, indent));
-
-        // Success test — name includes param-type suffix to disambiguate overloaded methods
         String paramSuffix  = buildParamSuffix(mm);
         String throwsClause = checkedThrowsClause(mm);
+
+        // ── 1 SUCCESS test ────────────────────────────────────────────────
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ")
           .append(convention.unitTestMethod(mm.name(), "success", paramSuffix))
           .append("()").append(throwsClause).append(" {\n");
-        sb.append(i(indent + 1)).append("// Test public method — private methods execute naturally via this call\n");
-        sb.append(i(indent + 1)).append("// Control behaviour by mocking dependencies (DAO, static utils, repos)\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
-
-        // Mock stub hints using typed matchers (any(TypeName.class)) for each domain param
-        buildMockStubHints(mm, m, sb, indent + 1);
-
-        if (mm.isProtected()) {
-            sb.append(i(indent + 1)).append("// when — protected access via ReflectionTestUtils (BAU class not modified)\n");
-            buildReflectionCall(mm, subject, sb, indent + 1);
-        } else {
-            sb.append(i(indent + 1)).append("// when\n");
-            buildDirectCall(mm, subject, sb, indent + 1);
-        }
-
-        sb.append(i(indent + 1)).append("// then\n");
-        if (mm.hasReturnValue()) {
-            sb.append(i(indent + 1)).append("assertNotNull(result);\n");
-            buildResultAssertHints(mm, m, sb, indent + 1);
-        } else {
-            buildVerifyHints(mm, m, sb, indent + 1);
-        }
+        // Guard null-checks: stub param getters so the happy path executes (no early throw)
+        sb.append(buildConditionGuardStubs(mm, m, indent + 1));
+        // Stub non-void dependency calls so the method produces a non-null result
+        sb.append(buildFieldCallStubs(mm, m, indent + 1));
+        if (mm.isProtected()) buildReflectionCall(mm, subject, sb, indent + 1);
+        else buildDirectCall(mm, subject, sb, indent + 1);
+        // Real assertion(s): verify dependency interactions + assert the result.
+        sb.append(buildSuccessAssertions(mm, m, indent + 1));
         sb.append(i(indent)).append("}\n\n");
 
-        // One exception test per method (most specific declared exception)
+        // ── 1 EXCEPTION test — only if we know a concrete dependency method to throw from ──
         String primaryException = primaryException(mm);
-        if (primaryException != null) {
+        if (primaryException != null && pickExceptionTriggerCall(mm, m) != null) {
             sb.append(buildExceptionTestMethod(mm, subject, primaryException, indent, m));
         }
 
-        // Branch tests — only when condition affects behaviour
-        sb.append(buildBranchTests(mm, subject, m, indent));
+        // ── 1 BRANCH test pair — only for a REAL condition scenario ────────
+        if (mm.hasConditionScenarios()) {
+            sb.append(buildBranchTests(mm, subject, m, indent));
+        }
 
-        // Additional tests ONLY for high-value methods (complex logic, not simple getters)
-        if (isHighValueMethod(mm)) {
-            // Numeric boundary tests
+        // ── 1 BOUNDARY test — only if a numeric comparison was detected ────
+        if (mm.hasNumericComparisons()) {
             sb.append(buildBoundaryTests(mm, subject, m, indent));
-            // Static dependency mock tests (non-JDK only)
+        }
+
+        // ── 1 STATIC test — only if a resolved static method call exists ───
+        if (mm.hasStaticDependencies() && hasResolvedStaticCall(mm, m)) {
             sb.append(buildStaticMockTests(mm, subject, m, indent));
-            // Exception flow test (try/catch)
-            if (mm.hasTryCatch()) {
-                sb.append(buildExceptionFlowTest(mm, subject, m, indent));
-            }
-        }
-
-        // @Entity inline construction — use MockedConstruction to intercept new X()
-        if (mm.hasConstructedTypes() && m.hasEntityConstructions()) {
-            sb.append(buildEntityConstructionTest(mm, subject, m, indent));
-        }
-
-        // @ParameterizedTest for primitive / String params
-        boolean hasSimpleParam = mm.parameters().stream()
-                .anyMatch(p -> isPrimitive(p.type()) || "String".equals(p.type()));
-        if (hasSimpleParam && mm.isPublic() && !mm.isProtected()) {
-            sb.append(buildParameterizedTestMethod(mm, subject, indent));
         }
 
         return sb.toString();
+    }
+
+    /**
+     * Builds real assertions for the success test — at least one concrete verify/assert,
+     * never a TODO:
+     *  - verify(...) every injected-field dependency method actually called by mm
+     *  - assertNotNull(result) when the method returns a value
+     */
+    private String buildSuccessAssertions(MethodMetadata mm, ClassMetadata m, int indent) {
+        StringBuilder sb = new StringBuilder();
+        boolean emitted = false;
+
+        for (String[] fc : injectedFieldCalls(mm, m)) {
+            // fc = [fieldName, methodName, argCount]
+            String matchers = "any()".repeat(0);
+            int argc = Integer.parseInt(fc[2]);
+            matchers = java.util.stream.IntStream.range(0, argc)
+                    .mapToObj(x -> "any()").collect(Collectors.joining(", "));
+            sb.append(i(indent)).append("verify(").append(fc[0]).append(").")
+              .append(fc[1]).append("(").append(matchers).append(");\n");
+            emitted = true;
+        }
+
+        if (mm.hasReturnValue()) {
+            sb.append(i(indent)).append("assertNotNull(result);\n");
+            emitted = true;
+        }
+
+        if (!emitted) {
+            String dep = m.mockCandidates().stream()
+                    .filter(f -> !f.isApplicationContext())
+                    .map(com.testgen.parser.FieldMetadata::name)
+                    .findFirst().orElse(null);
+            if (dep != null) {
+                sb.append(i(indent)).append("verifyNoMoreInteractions(").append(dep).append(");\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Stubs non-void calls on injected mock fields to return a non-null value,
+     * so the method under test can produce a non-null result for assertNotNull.
+     *   when(payeeRepo.findById(any())).thenReturn(mock(Payee.class, RETURNS_DEEP_STUBS));
+     */
+    private String buildFieldCallStubs(MethodMetadata mm, ClassMetadata m, int indent) {
+        if (m.fieldCallReturnTypes() == null || m.fieldCallReturnTypes().isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (String[] fc : injectedFieldCalls(mm, m)) {
+            String key = fc[0] + "." + fc[1];
+            String retType = m.fieldCallReturnTypes().get(key);
+            if (retType == null || "void".equals(retType)) continue;
+            int argc = Integer.parseInt(fc[2]);
+            String matchers = java.util.stream.IntStream.range(0, argc)
+                    .mapToObj(x -> "any()").collect(Collectors.joining(", "));
+            String retVal = stubReturnValue(retType, m);
+            sb.append(i(indent)).append("when(").append(fc[0]).append(".").append(fc[1])
+              .append("(").append(matchers).append(")).thenReturn(").append(retVal).append(");\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * For each NULL_CHECK condition on a parameter, stubs the checked getter to return
+     * a non-null value so the success test runs the happy path instead of the throw branch.
+     *   when(input.getAmount()).thenReturn(1L);
+     */
+    private String buildConditionGuardStubs(MethodMetadata mm, ClassMetadata m, int indent) {
+        if (!mm.hasConditionScenarios()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (com.testgen.parser.ConditionScenario sc : mm.conditionScenarios()) {
+            if (sc.type() != com.testgen.parser.ConditionScenario.ConditionType.NULL_CHECK) continue;
+            // Resolve the getter's return type from the param VO's fields, if known
+            String getterRet = resolveParamFieldType(sc.paramType(), sc.fieldName(), m);
+            String value = getterRet != null ? defaultValue(getterRet) : null;
+            if (value == null || value.startsWith("null")) {
+                // Unknown type → return a deep-stub mock object (non-null) generically
+                value = "mock(Object.class)";
+            }
+            sb.append(i(indent)).append("when(").append(sc.paramName()).append(".get")
+              .append(cap(sc.fieldName())).append("()).thenReturn(").append(value).append(");\n");
+        }
+        return sb.toString();
+    }
+
+    /** Looks up a field's declared type within a parameter VO (from paramTypeRegistry). */
+    private String resolveParamFieldType(String paramType, String fieldName, ClassMetadata m) {
+        if (m.paramTypeRegistry() == null) return null;
+        com.testgen.parser.ClassMetadata vo = m.paramTypeRegistry().get(paramType);
+        if (vo == null) return null;
+        return vo.fields().stream()
+                .filter(f -> f.name().equalsIgnoreCase(fieldName))
+                .map(com.testgen.parser.FieldMetadata::type)
+                .findFirst().orElse(null);
+    }
+
+    /** Compilable non-null return value for a stub: deep-stub mock for domain types. */
+    private String stubReturnValue(String returnType, ClassMetadata m) {
+        String raw = returnType.replaceAll("<.*>", "").trim();
+        String base = defaultValue(returnType);
+        if (!base.startsWith("null")) return base;          // primitive / standard
+        if (raw.isEmpty() || !Character.isUpperCase(raw.charAt(0))) return "null";
+        return "mock(" + raw + ".class, RETURNS_DEEP_STUBS)"; // domain / external type
+    }
+
+    /**
+     * Returns [fieldName, methodName, argCount] for each method call on an INJECTED MOCK
+     * field made by mm. Filters fieldCallTokens to scopes matching a mock candidate name.
+     */
+    private List<String[]> injectedFieldCalls(MethodMetadata mm, ClassMetadata m) {
+        if (mm.fieldCallTokens() == null) return List.of();
+        Set<String> mockNames = m.mockCandidates().stream()
+                .filter(f -> !f.isApplicationContext())
+                .map(com.testgen.parser.FieldMetadata::name)
+                .collect(Collectors.toSet());
+        List<String[]> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (String token : mm.fieldCallTokens()) {
+            String[] parts = token.split(":");
+            if (parts.length != 3) continue;
+            if (!mockNames.contains(parts[0])) continue;
+            String key = parts[0] + "." + parts[1];
+            if (seen.add(key)) out.add(parts);
+        }
+        return out;
+    }
+
+    /** True if at least one static call in this method resolves to a known method/return type. */
+    private boolean hasResolvedStaticCall(MethodMetadata mm, ClassMetadata m) {
+        if (mm.staticCallTokens() == null || m.resolvedStaticTypes() == null) return false;
+        return mm.staticCallTokens().stream().anyMatch(token -> {
+            int colon = token.lastIndexOf(':');
+            if (colon < 0) return false;
+            String key = token.substring(0, colon); // ClassName.methodName
+            return m.resolvedStaticTypes().containsKey(key);
+        });
     }
 
     protected String buildExceptionTestMethod(MethodMetadata mm, String subject,
                                               String exType, int indent, ClassMetadata m) {
+        // Find a KNOWN dependency method to throw from. If none, no exception test.
+        String[] trigger = pickExceptionTriggerCall(mm, m); // [fieldName, methodName, matchers] or null
+        if (trigger == null) return "";
+
+        // Always throw an UNCHECKED exception from the dependency: Mockito allows it on
+        // any mock method regardless of its declared throws clause, and it propagates
+        // through the method-under-test's signature without compile issues.
         StringBuilder sb = new StringBuilder();
         sb.append(i(indent)).append("@Test\n");
-        // Exception test: assertThrows wraps the call in a lambda — no throws clause needed
         sb.append(i(indent)).append("void ")
-          .append(convention.exceptionTestMethod(mm.name(), exType)).append("() throws Exception {\n");
-        sb.append(i(indent + 1)).append("// given\n");
+          .append(convention.exceptionTestMethod(mm.name(), exType)).append("() {\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
+        // Guard null-checks so execution reaches the dependency call (not an earlier throw)
+        sb.append(buildConditionGuardStubs(mm, m, indent + 1));
 
-        // Trigger exception via DEPENDENCY — not by stubbing the subject.
-        // doThrow().when(subject).method() tests Mockito stubbing, not your code.
-        String depForThrow2 = pickExceptionTriggerDep(m);
-        if (depForThrow2 != null) {
-            sb.append(i(indent + 1))
-              .append("doThrow(new ").append(exType).append("(\"test\"))")
-              .append(".when(").append(depForThrow2).append(").anyMethod(any());\n");
-            sb.append(i(indent + 1)).append("// TODO: replace anyMethod() with the actual dep method\n");
-        } else {
-            sb.append(i(indent + 1))
-              .append("// TODO: configure a dependency to throw ").append(exType).append("\n");
-        }
+        sb.append(i(indent + 1))
+          .append("doThrow(new RuntimeException(\"boom\")).when(").append(trigger[0])
+          .append(").").append(trigger[1]).append("(").append(trigger[2]).append(");\n");
 
-        sb.append(i(indent + 1)).append("// when / then\n");
         String params = paramNames(mm);
+        sb.append(i(indent + 1)).append("RuntimeException thrown = assertThrows(RuntimeException.class, () ->\n");
         if (mm.isProtected()) {
             String sep = params.isEmpty() ? "" : ", ";
-            sb.append(i(indent + 1))
-              .append(exType).append(" thrown = assertThrows(").append(exType).append(".class, () ->\n");
             sb.append(i(indent + 2)).append("ReflectionTestUtils.invokeMethod(")
               .append(subject).append(", \"").append(mm.name()).append("\"")
               .append(sep).append(params).append("));\n");
         } else {
-            sb.append(i(indent + 1))
-              .append(exType).append(" thrown = assertThrows(").append(exType).append(".class, () ->\n");
             sb.append(i(indent + 2)).append(subject).append(".")
               .append(mm.name()).append("(").append(params).append("));\n");
         }
-        sb.append(i(indent + 1)).append("assertNotNull(thrown);\n");
-        sb.append(i(indent + 1))
-          .append("// TODO: assertEquals(\"expected message\", thrown.getMessage());\n");
+        sb.append(i(indent + 1)).append("assertEquals(\"boom\", thrown.getMessage());\n");
         sb.append(i(indent)).append("}\n\n");
         return sb.toString();
     }
 
-    protected String buildParameterizedTestMethod(MethodMetadata mm, String subject, int indent) {
-        String testName   = convention.unitTestMethod(mm.name(), "parameterized");
-        String throwsDecl = checkedThrowsClause(mm);
-        return i(indent) + "@ParameterizedTest\n"
-             + i(indent) + "@CsvSource({\"value1\", \"value2\"}) // TODO: provide representative values\n"
-             + i(indent) + "void " + testName + "(String param)" + throwsDecl + " {\n"
-             + i(indent + 1) + "// TODO: cast param to required type, invoke " + subject + "." + mm.name() + "(...)\n"
-             + i(indent) + "}\n\n";
+    /**
+     * Returns [fieldName, methodName, matchers] for a KNOWN dependency call to throw from,
+     * or null if no concrete dependency method is known. Never guesses a method name.
+     * Priority: injected-field calls in this method → service-locator → app-context.
+     */
+    private String[] pickExceptionTriggerCall(MethodMetadata mm, ClassMetadata m) {
+        // 1) A method actually called on an injected @Mock field by mm
+        for (String[] fc : injectedFieldCalls(mm, m)) {
+            int argc = Integer.parseInt(fc[2]);
+            String matchers = java.util.stream.IntStream.range(0, argc)
+                    .mapToObj(x -> "any()").collect(Collectors.joining(", "));
+            return new String[]{ fc[0], fc[1], matchers };
+        }
+        // 2) Service-locator repo calls
+        if (m.hasServiceLocatorRepos()) {
+            for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
+                for (com.testgen.parser.ServiceLocatorAccess.RepoCall call : sla.repoCalls()) {
+                    String matchers = call.params().stream()
+                            .map(p -> mockitoMatcher(p.type()))
+                            .collect(Collectors.joining(", "));
+                    return new String[]{ sla.fieldName(), call.methodName(), matchers };
+                }
+            }
+        }
+        // 3) App-context repo calls
+        if (m.hasAppContextRepos()) {
+            for (com.testgen.parser.ServiceLocatorAccess sla : m.appContextRepos()) {
+                for (com.testgen.parser.ServiceLocatorAccess.RepoCall call : sla.repoCalls()) {
+                    String matchers = call.params().stream()
+                            .map(p -> mockitoMatcher(p.type()))
+                            .collect(Collectors.joining(", "));
+                    return new String[]{ sla.fieldName(), call.methodName(), matchers };
+                }
+            }
+        }
+        return null;
     }
 
     // ── Auto-init aware assertion/stub hints ────────────────────────────────
@@ -1860,35 +1919,15 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             boolean isDomain = value.startsWith("null"); // non-primitive, non-standard type
 
             if (!isDomain) {
+                // Primitive / standard type → literal value
                 sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
                   .append(" = ").append(value).append(";\n");
-                continue;
-            }
-
-            // Inline initialization — no TestData class references.
-            // Use field metadata if available for typed setter calls.
-            com.testgen.parser.ClassMetadata typeMeta =
-                    paramTypeRegistry != null ? paramTypeRegistry.get(rawType) : null;
-            if (typeMeta != null || (concreteClassNames != null && concreteClassNames.contains(rawType))) {
+            } else {
+                // Domain VO → mock with RETURNS_DEEP_STUBS (avoids huge new+setter chains).
+                // Deep stubs let chained getters (vo.getX().getY()) return non-null safely.
                 sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
-                  .append(" = new ").append(rawType).append("();\n");
-                if (typeMeta != null) {
-                    for (com.testgen.parser.FieldMetadata f : typeMeta.fields()) {
-                        if (f.isInjected() || f.isApplicationContext() || f.isValue() || f.isStatic()) continue;
-                        String fv = defaultValue(f.type());
-                        if (!fv.startsWith("null")) {
-                            sb.append(i(indent)).append(p.name()).append(".set")
-                              .append(toSetterSuffix(f.name(), f.type())).append("(").append(fv).append(");\n");
-                        }
-                    }
-                }
-                continue;
+                  .append(" = mock(").append(rawType).append(".class, RETURNS_DEEP_STUBS);\n");
             }
-
-            // External / unknown type
-            String extVal = defaultValue(rawType);
-            sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
-              .append(" = ").append(extVal.startsWith("null") ? "new " + rawType + "()" : extVal).append(";\n");
         }
     }
 
@@ -1905,6 +1944,12 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      *   isActive        (boolean)  →  Active         → setActive
      *   transactionId   (String)   →  TransactionId  → setTransactionId
      */
+    /** Capitalises the first character — for getter/setter name building. */
+    private String cap(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
     private String toSetterSuffix(String fieldName) {
         return toSetterSuffix(fieldName, null);
     }

@@ -94,7 +94,7 @@ public class JavaClassParser {
                     superClass, interfaces,
                     cls.isAbstract(), false,
                     hasLombok, hasBuilder, genericTypeParams, null,
-                    List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of(), List.of()  // parentChain/ifaceDefaults/concrete/paramRegistry/entities/serviceLocator/staticTypes/appCtxRepos
+                    List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of(), List.of(), Map.of()  // parentChain/ifaceDefaults/concrete/paramRegistry/entities/serviceLocator/staticTypes/appCtxRepos
             ));
 
         } catch (IOException e) {
@@ -346,6 +346,18 @@ public class JavaClassParser {
                 .distinct()
                 .toList();
 
+        // Calls on injected fields: payeeRepo.findById(x) → "payeeRepo:findById:1"
+        // Scope is a lowercase-starting NameExpr (a field/variable reference).
+        List<String> fieldCallTokens = allCalls.stream()
+                .filter(call -> call.getScope().filter(s -> s instanceof NameExpr).isPresent())
+                .map(call -> {
+                    String scope = ((NameExpr) call.getScope().get()).getNameAsString();
+                    return scope + ":" + call.getNameAsString() + ":" + call.getArguments().size();
+                })
+                .filter(t -> !t.isEmpty() && Character.isLowerCase(t.charAt(0)))
+                .distinct()
+                .toList();
+
         return new MethodMetadata(
                 method.getNameAsString(),
                 method.getTypeAsString(),
@@ -357,7 +369,7 @@ public class JavaClassParser {
                 superCalls, staticCallClasses, staticCallTokens, helperCalls,
                 hasConditionals, hasNumericComparisons, hasTryCatch,
                 conditionScenarios, constructedTypes, castToTypes, repoMethodCallTokens,
-                accessedFields, getBeanTypes
+                accessedFields, getBeanTypes, fieldCallTokens
         );
     }
 

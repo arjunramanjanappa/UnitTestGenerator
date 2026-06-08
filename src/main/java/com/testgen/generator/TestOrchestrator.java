@@ -136,6 +136,10 @@ public class TestOrchestrator {
                 // Detect @Repository types obtained via service-locator cast â€” add mocks + verify stubs
                 meta = meta.withServiceLocatorRepos(resolveServiceLocatorRepos(meta, fileIndex));
 
+                // Resolve return types of methods called on injected mock fields
+                // (so success tests can stub them to return non-null and assertions pass)
+                meta = meta.withFieldCallReturnTypes(resolveFieldCallReturnTypes(meta, fileIndex));
+
                 TestStrategy strategy = pickStrategy(meta, xmlRoutes);
                 // Generate ONLY the test class â€” no separate TestData files.
                 // All domain object setup is inline inside the test class itself.
@@ -351,7 +355,7 @@ public class TestOrchestrator {
                     Modifier.isPublic(mod), Modifier.isProtected(mod),
                     false, Modifier.isAbstract(mod), Modifier.isFinal(mod),
                     false, false,
-                    List.of(), List.of(), List.of(), List.of(), false, false, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
+                    List.of(), List.of(), List.of(), List.of(), false, false, false, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
             ));
         }
 
@@ -366,7 +370,7 @@ public class TestOrchestrator {
                 superName, List.of(),
                 Modifier.isAbstract(clazz.getModifiers()), clazz.isInterface(),
                 false, false, List.of(), null,
-                List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of(), List.of()
+                List.of(), List.of(), Set.of(), Map.of(), Set.of(), List.of(), Map.of(), List.of(), Map.of()
         );
     }
 
@@ -384,9 +388,51 @@ public class TestOrchestrator {
     // â”€â”€ Static method return type resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
+     * Resolves return types of methods called on injected mock fields.
+     * For "payeeRepo:findById:1" where payeeRepo is PayeeRepo, looks up PayeeRepo source,
+     * finds findById, records "payeeRepo.findById" -> "Payee".
+     * Lets the strategy stub non-void calls so success-test assertions pass.
+     */
+    private Map<String, String> resolveFieldCallReturnTypes(ClassMetadata m, Map<String, Path> fileIndex) {
+        Map<String, String> result = new HashMap<>();
+        // field name -> simple type
+        Map<String, String> fieldTypes = new HashMap<>();
+        for (com.testgen.parser.FieldMetadata f : m.fields()) {
+            fieldTypes.put(f.name(), f.simpleType());
+        }
+        m.methods().stream()
+                .filter(mm -> mm.fieldCallTokens() != null)
+                .flatMap(mm -> mm.fieldCallTokens().stream())
+                .distinct()
+                .forEach(token -> {
+                    String[] parts = token.split(":");
+                    if (parts.length != 3) return;
+                    String fieldName = parts[0], methodName = parts[1];
+                    int argCount = Integer.parseInt(parts[2]);
+                    String key = fieldName + "." + methodName;
+                    if (result.containsKey(key)) return;
+                    String type = fieldTypes.get(fieldName);
+                    if (type == null) return;
+                    Path src = fileIndex.get(type);
+                    if (src == null) return;
+                    try {
+                        com.github.javaparser.ast.CompilationUnit cu =
+                                com.github.javaparser.StaticJavaParser.parse(src);
+                        cu.findFirst(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.class)
+                                .ifPresent(cls -> cls.getMethods().stream()
+                                        .filter(md -> md.getNameAsString().equals(methodName))
+                                        .filter(md -> md.getParameters().size() == argCount)
+                                        .findFirst()
+                                        .ifPresent(md -> result.put(key, md.getTypeAsString())));
+                    } catch (Exception ignored) {}
+                });
+        return result.isEmpty() ? Map.of() : result;
+    }
+
+    /**
      * For each static call token "ClassName.methodName:argCount" detected in the class,
      * looks up the static class source and resolves the method's return type.
-     * Result: "ClassName.methodName" â†’ "ReturnType" for type-aware mock stub generation.
+     * Result: "ClassName.methodName" -> "ReturnType" for type-aware mock stub generation.
      */
     private Map<String, String> resolveStaticReturnTypes(ClassMetadata m, Map<String, Path> fileIndex) {
         Map<String, String> result = new HashMap<>();
