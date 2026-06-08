@@ -4,7 +4,6 @@ import com.testgen.camel.CamelRouteMetadata;
 import com.testgen.camel.CamelXmlRouteParser;
 import com.testgen.classifier.ClassClassifier;
 import com.testgen.classifier.ClassType;
-import com.testgen.generator.builder.DataBuilderGenerator;
 import com.testgen.generator.strategy.*;
 import com.testgen.parser.ClassMetadata;
 import com.testgen.parser.JavaClassParser;
@@ -29,7 +28,7 @@ import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 /**
- * Orchestrates the full scan → parse → classify → generate → write pipeline.
+ * Orchestrates the full scan â†’ parse â†’ classify â†’ generate â†’ write pipeline.
  */
 @Slf4j
 @Component
@@ -40,7 +39,6 @@ public class TestOrchestrator {
     private final JavaClassParser classParser;
     private final ClassClassifier classifier;
     private final CamelXmlRouteParser xmlRouteParser;
-    private final DataBuilderGenerator dataBuilderGenerator;
     private final TestFileWriter fileWriter;
 
     /**
@@ -81,13 +79,13 @@ public class TestOrchestrator {
         int total = javaFiles.size();
         report.totalScanned(total);
 
-        // ── Pre-pass: build className → Path index for parent + interface resolution ──
+        // â”€â”€ Pre-pass: build className â†’ Path index for parent + interface resolution â”€â”€
         Map<String, Path> fileIndex = buildFileIndex(sourceRoot);
 
-        // ── Pre-pass: determine concrete (non-interface, non-abstract) class names ──
+        // â”€â”€ Pre-pass: determine concrete (non-interface, non-abstract) class names â”€â”€
         Set<String> concreteClassNames = resolveConcreteClassNames(fileIndex);
 
-        // ── Pre-pass: build interface simple-name → Path index ──
+        // â”€â”€ Pre-pass: build interface simple-name â†’ Path index â”€â”€
         Map<String, Path> interfaceIndex = buildInterfaceIndex(sourceRoot);
 
         int generated = 0, skipped = 0, failed = 0;
@@ -126,7 +124,7 @@ public class TestOrchestrator {
                 // Resolve parsed metadata for types used in method params (for typed inline init)
                 meta = meta.withParamTypeRegistry(resolveParamTypeRegistry(meta, fileIndex));
 
-                // Detect @Entity types instantiated inline via new X() — use MockedConstruction in tests
+                // Detect @Entity types instantiated inline via new X() â€” use MockedConstruction in tests
                 meta = meta.withEntityConstructions(resolveEntityConstructions(meta, fileIndex));
 
                 // Detect ApplicationContext.getBean(X.class) repo/DAO lookups (separate from makeDAO)
@@ -135,11 +133,11 @@ public class TestOrchestrator {
                 // Resolve static method return types for type-aware mock stubs
                 meta = meta.withResolvedStaticTypes(resolveStaticReturnTypes(meta, fileIndex));
 
-                // Detect @Repository types obtained via service-locator cast — add mocks + verify stubs
+                // Detect @Repository types obtained via service-locator cast â€” add mocks + verify stubs
                 meta = meta.withServiceLocatorRepos(resolveServiceLocatorRepos(meta, fileIndex));
 
                 TestStrategy strategy = pickStrategy(meta, xmlRoutes);
-                // Generate ONLY the test class — no separate TestData files.
+                // Generate ONLY the test class â€” no separate TestData files.
                 // All domain object setup is inline inside the test class itself.
                 List<GeneratedTest> tests = new ArrayList<>(strategy.generate(meta, convention));
 
@@ -183,10 +181,10 @@ public class TestOrchestrator {
                 false, 1, null);
     }
 
-    // ── File index helpers ──────────────────────────────────────────────────
+    // â”€â”€ File index helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
-     * Walks sourceRoot and builds simpleName → Path for all .java files.
+     * Walks sourceRoot and builds simpleName â†’ Path for all .java files.
      * Includes both classes and interfaces.
      */
     private Map<String, Path> buildFileIndex(Path sourceRoot) {
@@ -245,17 +243,17 @@ public class TestOrchestrator {
         return Collections.unmodifiableSet(concrete);
     }
 
-    // ── Parent chain resolution ─────────────────────────────────────────────
+    // â”€â”€ Parent chain resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Resolves the parent chain.
      *
      * Priority per level:
-     *  1. Source file in fileIndex  → JavaParser (full fidelity)
-     *  2. Source not found          → reflection via Class.forName (framework/library classes)
-     *  3. Neither resolvable        → stop, warn
+     *  1. Source file in fileIndex  â†’ JavaParser (full fidelity)
+     *  2. Source not found          â†’ reflection via Class.forName (framework/library classes)
+     *  3. Neither resolvable        â†’ stop, warn
      *
-     * depth=0 → 1 level (direct parent); depth=N → N+1 levels
+     * depth=0 â†’ 1 level (direct parent); depth=N â†’ N+1 levels
      */
     private List<ClassMetadata> resolveParentChain(ClassMetadata m,
                                                     Map<String, Path> fileIndex,
@@ -278,7 +276,7 @@ public class TestOrchestrator {
                 }
             }
 
-            // 2. Framework/library class — resolve via reflection
+            // 2. Framework/library class â€” resolve via reflection
             ClassMetadata reflected = resolveViaReflection(parentName, current.imports());
             if (reflected != null) {
                 chain.add(reflected);
@@ -313,7 +311,7 @@ public class TestOrchestrator {
             log.info("Resolved parent '{}' via reflection ({})", simpleName, fqn);
             return buildMetadataFromReflection(clazz);
         } catch (ClassNotFoundException e) {
-            log.debug("Parent '{}' ({}) not on classpath — skipping reflection resolution", simpleName, fqn);
+            log.debug("Parent '{}' ({}) not on classpath â€” skipping reflection resolution", simpleName, fqn);
             return null;
         }
     }
@@ -372,7 +370,7 @@ public class TestOrchestrator {
         );
     }
 
-    // ── Interface default method resolution (Feature 2) ────────────────────
+    // â”€â”€ Interface default method resolution (Feature 2) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private List<MethodMetadata> resolveInterfaceDefaultMethods(ClassMetadata m,
                                                                   Map<String, Path> ifaceIndex) {
@@ -383,93 +381,12 @@ public class TestOrchestrator {
                 .collect(Collectors.toList());
     }
 
-    // ── Dependent TestData generation ──────────────────────────────────────
-
-    /**
-     * For every domain type in the class's paramTypeRegistry that originated from
-     * a project source file (not a reflection-resolved framework class), generates
-     * a companion TestData file so the generated test compiles without missing
-     * XxxTestData references.
-     *
-     * Skips:
-     *  - Types from the classpath/reflection (sourceFilePath starts with "[classpath:")
-     *  - Types already being processed in the main scan loop (avoids duplicates)
-     *  - Types whose TestData file was already added in a previous dep expansion
-     */
-    private void generateDependentTestData(ClassMetadata meta,
-                                            List<GeneratedTest> tests,
-                                            List<Path> alreadyScanned) {
-        generateDependentTestData(meta, tests, alreadyScanned, null);
-    }
-
-    private void generateDependentTestData(ClassMetadata meta,
-                                            List<GeneratedTest> tests,
-                                            List<Path> alreadyScanned,
-                                            Map<String, Path> fileIndexForCascade) {
-        if (meta.paramTypeRegistry() == null || meta.paramTypeRegistry().isEmpty()) return;
-
-        // Build a set of class names already covered by the main scan
-        Set<String> alreadyScannedNames = alreadyScanned.stream()
-                .map(p -> p.getFileName().toString().replace(".java", ""))
-                .collect(Collectors.toSet());
-
-        // Track TestData file names already added to this batch (within same class's deps)
-        Set<String> addedTestDataFiles = tests.stream()
-                .map(GeneratedTest::fileName)
-                .collect(Collectors.toSet());
-
-        for (Map.Entry<String, com.testgen.parser.ClassMetadata> entry
-                : meta.paramTypeRegistry().entrySet()) {
-
-            com.testgen.parser.ClassMetadata depMeta = entry.getValue();
-
-            // Skip reflection-resolved framework/library types
-            if (depMeta.sourceFilePath().startsWith("[classpath:")) continue;
-
-            // Skip if this type will be (or was) processed in the main scan loop
-            if (alreadyScannedNames.contains(depMeta.className())) continue;
-
-            // Skip interfaces, abstract classes and @Repository/@Service types —
-            // these cannot be instantiated; they need mock(), not TestData
-            if (depMeta.isInterface() || depMeta.isAbstract()) continue;
-            boolean isSpringComponent = depMeta.annotations().stream()
-                    .anyMatch(a -> a.equals("Repository") || a.equals("Service") || a.equals("Component"));
-            if (isSpringComponent) continue;
-
-            // Skip if TestData was already added (e.g. from a previous dep in same class)
-            String testDataFileName = depMeta.className() + "TestData.java";
-            if (addedTestDataFiles.contains(testDataFileName)) continue;
-
-            // Place companion TestData in the SAME package as the class under test
-            // so it is generated alongside ClassATest.java, not in the dependency's package.
-            // Also inherit the owning class's import list so FQN resolution works correctly
-            // (avoids same-simple-name ambiguity across packages).
-            com.testgen.parser.ClassMetadata enriched = depMeta
-                    .withConcreteClassNames(meta.concreteClassNames())
-                    .withPackageName(meta.packageName())   // ← same package as ClassA
-                    .withImports(meta.imports());           // ← ClassA's imports as FQN authority
-
-            tests.add(dataBuilderGenerator.generate(enriched));
-            addedTestDataFiles.add(testDataFileName);
-            log.info("Generated companion TestData for {} in package {}",
-                    depMeta.className(), meta.packageName());
-
-            // Cascade: generate TestData for domain object fields within this dep type
-            if (fileIndexForCascade != null) {
-                Set<String> depVisited = new HashSet<>();
-                depVisited.add(meta.className());
-                depVisited.add(depMeta.className());
-                generateFieldTypeTestData(enriched, tests, fileIndexForCascade, depVisited);
-            }
-        }
-    }
-
-    // ── Static method return type resolution ───────────────────────────────
+    // â”€â”€ Static method return type resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * For each static call token "ClassName.methodName:argCount" detected in the class,
      * looks up the static class source and resolves the method's return type.
-     * Result: "ClassName.methodName" → "ReturnType" for type-aware mock stub generation.
+     * Result: "ClassName.methodName" â†’ "ReturnType" for type-aware mock stub generation.
      */
     private Map<String, String> resolveStaticReturnTypes(ClassMetadata m, Map<String, Path> fileIndex) {
         Map<String, String> result = new HashMap<>();
@@ -506,7 +423,7 @@ public class TestOrchestrator {
         return result.isEmpty() ? Map.of() : result;
     }
 
-    // ── Entity construction detection ──────────────────────────────────────
+    // â”€â”€ Entity construction detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Resolves which types instantiated via new X() inside the class's methods
@@ -536,12 +453,12 @@ public class TestOrchestrator {
         return entities.isEmpty() ? Set.of() : Collections.unmodifiableSet(entities);
     }
 
-    // ── Reflection type name helpers ───────────────────────────────────────
+    // â”€â”€ Reflection type name helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Converts a reflected generic type to a simple readable name.
-     * e.g. java.util.List<java.lang.String> → List<String>
-     *      java.util.Optional<com.example.FTBaseVO> → Optional<FTBaseVO>
+     * e.g. java.util.List<java.lang.String> â†’ List<String>
+     *      java.util.Optional<com.example.FTBaseVO> â†’ Optional<FTBaseVO>
      */
     private String simplifyReflectedType(java.lang.reflect.Type type) {
         if (type instanceof Class<?> cls) {
@@ -559,144 +476,14 @@ public class TestOrchestrator {
         return type.getTypeName().replaceAll("[a-z]+\\.", ""); // strip package prefixes
     }
 
-    // ── Field-type cascade TestData generation ─────────────────────────────
-
-    /**
-     * Cascades TestData generation to domain object types used as FIELDS in the given class.
-     *
-     * Problem: FTBaseVO has 'private CoolingPeriodVO ftcoolingperiod'.
-     * FTBaseVOTestData references CoolingPeriodVOTestData.buildValidCoolingPeriodVO()
-     * but CoolingPeriodVOTestData is never generated → compile error.
-     *
-     * Solution: walk each non-static, non-injected field type; if the type exists in
-     * the source root and is a concrete class, generate its TestData and recurse.
-     * A visited set prevents infinite loops from circular VO references.
-     */
-    private void generateFieldTypeTestData(ClassMetadata meta,
-                                            List<GeneratedTest> tests,
-                                            Map<String, Path> fileIndex,
-                                            Set<String> visited) {
-        for (com.testgen.parser.FieldMetadata f : meta.fields()) {
-            if (f.isStatic() || f.isApplicationContext() || f.isValue()) continue;
-
-            String rawType = f.simpleType();
-            if (rawType.isEmpty() || !Character.isUpperCase(rawType.charAt(0))) continue;
-            if (!visited.add(rawType)) continue; // already processed — prevents circular loops
-
-            // Skip if TestData already queued
-            String testDataFile = rawType + "TestData.java";
-            if (tests.stream().anyMatch(t -> t.fileName().equals(testDataFile))) continue;
-
-            Path srcFile = fileIndex.get(rawType);
-            if (srcFile == null) continue; // external type — can't generate
-
-            classParser.parse(srcFile).ifPresent(parsed -> {
-                // Skip interfaces, abstract classes, Spring components
-                if (parsed.isInterface() || parsed.isAbstract()) return;
-                if (parsed.annotations().stream().anyMatch(a ->
-                        a.equals("Repository") || a.equals("Service") || a.equals("Component"))) return;
-
-                ClassMetadata enriched = classifier.classify(parsed)
-                        .withConcreteClassNames(meta.concreteClassNames())
-                        .withParamTypeRegistry(meta.paramTypeRegistry())
-                        .withPackageName(meta.packageName())   // co-locate with test
-                        .withImports(meta.imports());           // ClassA's FQN authority
-
-                tests.add(dataBuilderGenerator.generate(enriched));
-                log.info("Generated cascade TestData for field type: {} (from {})",
-                        rawType, meta.className());
-
-                // Recurse for this type's own domain object fields
-                generateFieldTypeTestData(enriched, tests, fileIndex, visited);
-            });
-        }
-    }
-
-    // ── Repo return type TestData generation ───────────────────────────────
-
-    /**
-     * For every method return type of a service-locator @Repository that exists in
-     * the project source root, generates a companion TestData file.
-     *
-     * Example: TPIBCasCounterRepo.findByInternalId() returns TPIBCasCounter (@Entity).
-     * → Generates TPIBCasCounterTestData.java alongside the test, with:
-     *     buildValidTPIBCasCounter()   — all fields set with typed defaults
-     *     buildInvalidTPIBCasCounter() — constraint violations
-     *   so when(repo.find()).thenReturn(TPIBCasCounterTestData.buildValidTPIBCasCounter())
-     *   gives a realistic object whose fields can be asserted on.
-     */
-    private void generateRepoReturnTestData(ClassMetadata meta,
-                                             List<GeneratedTest> tests,
-                                             List<Path> alreadyScanned,
-                                             Map<String, Path> fileIndex) {
-        if (!meta.hasServiceLocatorRepos()) return;
-
-        Set<String> alreadyScannedNames = alreadyScanned.stream()
-                .map(p -> p.getFileName().toString().replace(".java", ""))
-                .collect(Collectors.toSet());
-
-        Set<String> addedFiles = tests.stream()
-                .map(GeneratedTest::fileName)
-                .collect(Collectors.toSet());
-
-        meta.serviceLocatorRepos().forEach(sla ->
-            sla.repoCalls().forEach(call -> {
-                if (call.returnType() == null) return;
-
-                // Extract entity class name from return type (strips List<>, Optional<>, etc.)
-                String entityType;
-                String rt = call.returnType();
-                if (rt.contains("<")) {
-                    entityType = rt.substring(rt.indexOf('<') + 1, rt.lastIndexOf('>'))
-                                   .replaceAll("<.*>", "").trim();
-                } else {
-                    entityType = rt.replaceAll("<.*>", "").trim();
-                }
-
-                if (entityType.isEmpty() || !Character.isUpperCase(entityType.charAt(0))) return;
-                if (alreadyScannedNames.contains(entityType)) return;
-
-                String testDataFile = entityType + "TestData.java";
-                if (!addedFiles.add(testDataFile)) return; // already added
-
-                Path srcFile = fileIndex.get(entityType);
-                if (srcFile == null) return; // external type — can't generate
-
-                classParser.parse(srcFile).ifPresent(parsed -> {
-                    // Skip interfaces, abstract classes, and @Repository types —
-                    // these cannot be instantiated with new() or have setters called.
-                    // repoReturnValue() already handles them with mock(Type.class).
-                    if (parsed.isInterface() || parsed.isAbstract()) {
-                        log.debug("Skipping TestData for {}: is interface or abstract", entityType);
-                        return;
-                    }
-                    boolean isRepo = parsed.annotations().stream()
-                            .anyMatch(a -> a.equals("Repository") || a.equals("Component")
-                                       || a.equals("Service"));
-                    if (isRepo) {
-                        log.debug("Skipping TestData for {}: is @Repository/@Component/@Service", entityType);
-                        return;
-                    }
-                    ClassMetadata enriched = classifier.classify(parsed)
-                            .withConcreteClassNames(meta.concreteClassNames())
-                            .withPackageName(meta.packageName())
-                            .withImports(meta.imports());
-                    tests.add(dataBuilderGenerator.generate(enriched));
-                    log.info("Generated TestData for repo return type: {} (from {})",
-                            entityType, sla.repoType());
-                });
-            })
-        );
-    }
-
-    // ── ApplicationContext.getBean repo resolution ──────────────────────────
+    // â”€â”€ ApplicationContext.getBean repo resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Detects repos/DAOs obtained via ApplicationContext.getBean(X.class) or
      * getBean("name", X.class). These are separate from makeDAO-based service locators
      * and need their own @Mock fields injected differently.
      *
-     * Pattern detected: context.getBean(TPIBFTPayeeRepo.class) → repo type = TPIBFTPayeeRepo
+     * Pattern detected: context.getBean(TPIBFTPayeeRepo.class) â†’ repo type = TPIBFTPayeeRepo
      */
     private List<com.testgen.parser.ServiceLocatorAccess> resolveAppContextRepos(
             ClassMetadata m, Map<String, Path> fileIndex) {
@@ -735,7 +522,7 @@ public class TestOrchestrator {
         return result;
     }
 
-    // ── Service locator repo resolution ────────────────────────────────────
+    // â”€â”€ Service locator repo resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Finds @Repository types obtained via service-locator casts in method bodies:
@@ -862,7 +649,7 @@ public class TestOrchestrator {
                                     methodName, params, md.getTypeAsString()));
                         },
                         () -> {
-                            // Method not found in interface — use any() placeholders
+                            // Method not found in interface â€” use any() placeholders
                             List<MethodMetadata.ParameterMetadata> params =
                                     java.util.Collections.nCopies(argCount,
                                             new MethodMetadata.ParameterMetadata("Object", "arg"));
@@ -874,7 +661,7 @@ public class TestOrchestrator {
         return calls;
     }
 
-    // ── Param type registry (typed inline init for non-TestData types) ──────
+    // â”€â”€ Param type registry (typed inline init for non-TestData types) â”€â”€â”€â”€â”€â”€
 
     /**
      * For every domain-object type used as a method parameter in this class,
@@ -895,7 +682,7 @@ public class TestOrchestrator {
         return registry.isEmpty() ? Map.of() : registry;
     }
 
-    // ── Strategy selection ──────────────────────────────────────────────────
+    // â”€â”€ Strategy selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private TestStrategy pickStrategy(ClassMetadata m, List<CamelRouteMetadata> xmlRoutes) {
         return switch (m.classType()) {
@@ -908,7 +695,7 @@ public class TestOrchestrator {
         };
     }
 
-    // ── Spring Boot version detection ───────────────────────────────────────
+    // â”€â”€ Spring Boot version detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private String detectSpringBootVersion(Path sourceRoot) {
         Path current = sourceRoot;
