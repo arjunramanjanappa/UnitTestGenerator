@@ -307,30 +307,48 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      */
     protected String buildMockDeclarations(ClassMetadata m, int indent) {
         StringBuilder sb = new StringBuilder();
-        sb.append(buildMockDeclarations(m.mockCandidates(), indent, m.concreteClassNames()));
-        // Layer 1: makeDAO-based service locator repos
+        // Rule 1/6: only mock injected fields that are ACTUALLY called somewhere.
+        // ApplicationContext is always kept (needed for getBean-style lookups).
+        Set<String> called = calledFieldNames(m);
+        List<FieldMetadata> usedMocks = m.mockCandidates().stream()
+                .filter(f -> f.isApplicationContext() || called.contains(f.name()))
+                .toList();
+        sb.append(buildMockDeclarations(usedMocks, indent, m.concreteClassNames()));
+
+        // Rule 3: only emit service-locator repos that have PROVEN calls (real pattern).
         if (m.hasServiceLocatorRepos()) {
-            sb.append(i(indent)).append("// Service-locator repos (via makeDAO/factory pattern)\n");
             for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
+                if (sla.repoCalls() == null || sla.repoCalls().isEmpty()) continue; // skip fake/unused
                 sb.append(i(indent)).append("@Mock\n");
                 sb.append(i(indent)).append("private ").append(sla.repoType())
                   .append(" ").append(sla.fieldName()).append(";\n\n");
             }
         }
-        // Layer 2: ApplicationContext.getBean() repos — separate mocks, injected differently
         if (m.hasAppContextRepos()) {
-            sb.append(i(indent)).append("// AppContext repos (via getBean(X.class) pattern)\n");
             for (com.testgen.parser.ServiceLocatorAccess sla : m.appContextRepos()) {
-                // Skip if already generated from service-locator layer (dedup)
-                boolean alreadyAdded = m.hasServiceLocatorRepos() && m.serviceLocatorRepos().stream()
+                if (sla.repoCalls() == null || sla.repoCalls().isEmpty()) continue;
+                boolean dup = m.hasServiceLocatorRepos() && m.serviceLocatorRepos().stream()
                         .anyMatch(s -> s.repoType().equals(sla.repoType()));
-                if (alreadyAdded) continue;
+                if (dup) continue;
                 sb.append(i(indent)).append("@Mock\n");
                 sb.append(i(indent)).append("private ").append(sla.repoType())
                   .append(" ").append(sla.fieldName()).append("; // via ApplicationContext.getBean()\n\n");
             }
         }
         return sb.toString();
+    }
+
+    /** Set of injected-field names that are actually called in some method body. */
+    private Set<String> calledFieldNames(ClassMetadata m) {
+        Set<String> names = new HashSet<>();
+        for (MethodMetadata mm : m.methods()) {
+            if (mm.fieldCallTokens() == null) continue;
+            for (String token : mm.fieldCallTokens()) {
+                int c = token.indexOf(':');
+                if (c > 0) names.add(token.substring(0, c));
+            }
+        }
+        return names;
     }
 
     protected String buildMockDeclarations(List<FieldMetadata> fields, int indent) {
@@ -662,9 +680,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 sb.append(i(indent + 1)).append("// ").append(String.join(", ", privateDeps)).append("\n\n");
             }
 
-            // Inject all mocks via ReflectionTestUtils (BAU field injection — source not modified)
+            // Inject only the mocks we actually declared (the called ones) — keeps
+            // setUp consistent with the @Mock fields and avoids referencing undeclared vars.
+            Set<String> declaredMocks = calledFieldNames(m);
             for (FieldMetadata f : m.mockCandidates()) {
-                if (!f.isApplicationContext()) {
+                if (!f.isApplicationContext() && declaredMocks.contains(f.name())) {
                     sb.append(i(indent + 1)).append("ReflectionTestUtils.setField(").append(subject)
                       .append(", \"").append(f.name()).append("\", ").append(f.name()).append(");\n");
                 }
@@ -1215,40 +1235,36 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         //   → do NOT stub with Mockito (can't call from test package)
         //   → override here with ISOLATED implementation (no super call)
         //
-        // Isolation strategy:
-        //   void method  → empty body  (no side effects, fully controlled)
-        //   return type  → typed default return (no parent logic executed)
-        //   service loc  → handled above via _mockDaos map
+        // Widen ONLY the protected parent methods that ClassA actually calls
+        // (execution safety + no over-generation). Each override just delegates to
+        // super.method() — it widens visibility, it does NOT change behaviour.
         if (m.hasParentChain()) {
+            Set<String> calledInClassA = m.methods().stream()
+                    .filter(MethodMetadata::isTestable)
+                    .flatMap(mm -> mm.helperMethodCalls().stream())
+                    .collect(Collectors.toSet());
             Set<String> added = new HashSet<>();
             for (ClassMetadata parent : m.parentChain()) {
                 if (m.packageName().equals(parent.packageName())) continue;
                 for (MethodMetadata pm : parent.methods()) {
-                    if (!pm.isProtected() || pm.isPublic()) continue;
-                    if (pm.isFinal()) continue;
+                    if (!pm.isProtected() || pm.isPublic() || pm.isFinal()) continue;
+                    if (!calledInClassA.contains(pm.name())) continue; // only widen what's used
                     if (!added.add(pm.name())) continue;
 
                     String params = pm.parameters().stream()
                             .map(p -> p.type() + " " + p.name())
                             .collect(Collectors.joining(", "));
+                    String callArgs = paramNames(pm);
                     String throwsDecl = pm.throwsExceptions()
                             ? " throws " + String.join(", ", pm.thrownExceptions()) : "";
                     sb.append(i(indent + 1)).append("@Override\n");
                     sb.append(i(indent + 1)).append("public ")
                       .append(pm.returnType()).append(" ").append(pm.name())
                       .append("(").append(params).append(")").append(throwsDecl).append(" {\n");
-                    if (pm.hasReturnValue()) {
-                        // Typed default return — parent logic NOT executed
-                        String retVal = typedReturnValue(pm.returnType(), m);
-                        sb.append(i(indent + 2)).append("return ").append(retVal)
-                          .append("; // isolated — parent ").append(parent.className())
-                          .append(".").append(pm.name()).append("() NOT called\n");
-                    } else {
-                        // void — empty body, fully isolated
-                        sb.append(i(indent + 2)).append("// void isolated — parent ")
-                          .append(parent.className()).append(".").append(pm.name())
-                          .append("() NOT called\n");
-                    }
+                    // Delegate to super — widen access only, preserve real behaviour
+                    sb.append(i(indent + 2))
+                      .append(pm.hasReturnValue() ? "return " : "")
+                      .append("super.").append(pm.name()).append("(").append(callArgs).append(");\n");
                     sb.append(i(indent + 1)).append("}\n\n");
                 }
             }
