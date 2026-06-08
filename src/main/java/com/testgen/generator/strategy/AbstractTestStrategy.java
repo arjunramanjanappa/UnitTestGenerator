@@ -16,7 +16,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     protected NamingConvention convention = NamingConvention.TEST_METHOD_SCENARIO;
 
-    // ── Known AOP / proxy-based annotations ────────────────────────────────
+    // â”€â”€ Known AOP / proxy-based annotations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // These annotations are silently inactive in pure Mockito (Unit) tests.
     // The generator emits warnings in Unit and dedicated stubs in Functional.
 
@@ -34,7 +34,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             "Validated", "Valid"
     );
 
-    // All well-known annotations — anything else on a method is treated as custom AOP
+    // All well-known annotations â€” anything else on a method is treated as custom AOP
     private static final Set<String> ALL_KNOWN_ANNOTATIONS;
     static {
         Set<String> known = new HashSet<>();
@@ -70,13 +70,13 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return "Custom AOP/aspect";
     }
 
-    // ── Indentation helper ──────────────────────────────────────────────────
+    // â”€â”€ Indentation helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     protected String i(int n) {
         return "    ".repeat(n);
     }
 
-    // ── Default value literals ──────────────────────────────────────────────
+    // â”€â”€ Default value literals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     protected String defaultValue(String rawType) {
         String type = rawType.replaceAll("<.*>", "").trim();
@@ -124,7 +124,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         };
     }
 
-    // ── Dependency import resolution ────────────────────────────────────────
+    // â”€â”€ Dependency import resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Collects all simple type names referenced in the generated test
@@ -180,7 +180,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             });
         }
 
-        // Static dependency classes (MockedStatic<MasterUtil> — MasterUtil needs import)
+        // Static dependency classes (MockedStatic<MasterUtil> â€” MasterUtil needs import)
         m.methods().stream()
                 .filter(mm -> mm.staticCallClasses() != null)
                 .flatMap(mm -> mm.staticCallClasses().stream())
@@ -196,7 +196,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             m.appContextRepos().forEach(sla -> usedSimpleNames.add(sla.repoType()));
         }
 
-        // Field-call return types — used in mock(ReturnType.class) stubs in success tests.
+        // Field-call return types â€” used in mock(ReturnType.class) stubs in success tests.
         // Covers interfaces/entities returned by repo/dao methods that we mock.
         if (m.fieldCallReturnTypes() != null) {
             m.fieldCallReturnTypes().values().forEach(rt -> {
@@ -211,15 +211,15 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             });
         }
 
-        // Build FQN → simple-name map.
-        // RULE: always infer from source class — never guess packages.
+        // Build FQN â†’ simple-name map.
+        // RULE: always infer from source class â€” never guess packages.
         // Priority: explicit imports > static member imports > same-package types
         Map<String, String> simpleToFqn = new LinkedHashMap<>();
         List<String> wildcardPackages = new ArrayList<>(); // "import com.example.*" packages
 
         for (String fqn : m.imports()) {
             if (fqn.endsWith(".*")) {
-                // Wildcard import — package will be searched in fileIndex
+                // Wildcard import â€” package will be searched in fileIndex
                 wildcardPackages.add(fqn.substring(0, fqn.length() - 2)); // strip ".*"
                 continue;
             }
@@ -266,7 +266,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         // Emit an import for each used type that appears in the source imports
         StringBuilder sb = new StringBuilder();
         for (String simple : usedSimpleNames) {
-            // Strip generic part if present (e.g. "List<Order>" → "Order")
+            // Strip generic part if present (e.g. "List<Order>" â†’ "Order")
             String[] parts = simple.replaceAll(".*<|>.*", "").split("[,\\s]+");
             for (String part : parts) {
                 String stripped = part.trim().replaceAll("[\\[\\]]", "");
@@ -288,10 +288,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         }
     }
 
-    // ── Common import blocks ────────────────────────────────────────────────
+    // â”€â”€ Common import blocks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
-     * Spring Boot 3.4 moved @MockBean → @MockitoBean (new package).
+     * Spring Boot 3.4 moved @MockBean â†’ @MockitoBean (new package).
      * We pick the right import based on the detected target project version.
      */
     protected String commonImports(String springBootVersion) {
@@ -312,18 +312,18 @@ public abstract class AbstractTestStrategy implements TestStrategy {
              + "import static org.mockito.ArgumentMatchers.*;\n";
     }
 
-    /** @MockBean removed — use @Mock everywhere to avoid spring-boot-test dependency issues. */
+    /** @MockBean removed â€” use @Mock everywhere to avoid spring-boot-test dependency issues. */
     protected String mockBeanAnnotation(String springBootVersion) {
         return "@Mock";
     }
 
-    // ── Mock / MockBean declarations (Feature 4: @Spy for concrete types) ────
+    // â”€â”€ Mock / MockBean declarations (Feature 4: @Spy for concrete types) â”€â”€â”€â”€
 
     /**
      * Emits @Mock or @Spy for each injected field based on whether the field type
      * is a concrete class found in the scanned source root.
-     * – Interface / unknown type → @Mock  (safe, works everywhere)
-     * – Concrete class found in source → @Spy  (calls real methods unless stubbed)
+     * â€“ Interface / unknown type â†’ @Mock  (safe, works everywhere)
+     * â€“ Concrete class found in source â†’ @Spy  (calls real methods unless stubbed)
      */
     protected String buildMockDeclarations(ClassMetadata m, int indent) {
         StringBuilder sb = new StringBuilder();
@@ -386,7 +386,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 boolean isConcrete = concreteTypes.contains(f.simpleType());
                 String annotation  = isConcrete ? "@Spy" : "@Mock";
                 if (f.isConstructorInjected()) {
-                    sb.append(i(indent)).append("// Constructor-injected — Mockito @InjectMocks wires via constructor\n");
+                    sb.append(i(indent)).append("// Constructor-injected â€” Mockito @InjectMocks wires via constructor\n");
                 }
                 sb.append(i(indent)).append(annotation).append("\n");
                 sb.append(i(indent)).append("private ").append(f.type()).append(" ").append(f.name()).append(";\n\n");
@@ -401,7 +401,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     protected String buildMockBeanDeclarations(List<FieldMetadata> fields, int indent,
                                                 String springBootVersion) {
-        // @MockBean removed — @Mock works everywhere without spring-boot-test dependency
+        // @MockBean removed â€” @Mock works everywhere without spring-boot-test dependency
         String annotation = "@Mock";
         StringBuilder sb = new StringBuilder();
         for (FieldMetadata f : fields) {
@@ -410,7 +410,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 sb.append(i(indent)).append("ApplicationContext ").append(f.name()).append(";\n\n");
             } else if (f.isMockCandidate()) {
                 if (f.isConstructorInjected()) {
-                    sb.append(i(indent)).append("// Constructor-injected — wired via Spring context\n");
+                    sb.append(i(indent)).append("// Constructor-injected â€” wired via Spring context\n");
                 }
                 sb.append(i(indent)).append(annotation).append("\n");
                 sb.append(i(indent)).append("private ").append(f.type()).append(" ").append(f.name()).append(";\n\n");
@@ -419,12 +419,12 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
-    // ── Multi-level parent spy declarations (Feature 1) ────────────────────
+    // â”€â”€ Multi-level parent spy declarations (Feature 1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Emits @Spy declarations for every level of the parent chain.
      * Deepest ancestor is declared first so Mockito can resolve injection order.
-     * Example for ClassA → ClassB → ClassC:
+     * Example for ClassA â†’ ClassB â†’ ClassC:
      *   @Spy ClassC grandParent;   // level 2
      *   @Spy ClassB parent;        // level 1
      */
@@ -449,7 +449,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
-    // ── ApplicationContext stubs ────────────────────────────────────────────
+    // â”€â”€ ApplicationContext stubs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     protected String buildAppCtxStubs(ClassMetadata m, int indent) {
         if (!m.hasApplicationContext()) return "";
@@ -457,13 +457,13 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .filter(FieldMetadata::isApplicationContext)
                 .map(FieldMetadata::name)
                 .findFirst().orElse("applicationContext");
-        // lenient() — Mockito 5 strict stubbing: these may not be called by every test method
+        // lenient() â€” Mockito 5 strict stubbing: these may not be called by every test method
         return i(indent) + "lenient().when(" + field + ".getBean(any(Class.class))).thenReturn(mock(Object.class));\n"
              + i(indent) + "lenient().when(" + field + ".getBean(anyString(), any(Class.class))).thenReturn(mock(Object.class));\n"
              + i(indent) + "lenient().when(" + field + ".containsBean(anyString())).thenReturn(true);\n";
     }
 
-    // ── Parent-class (BAU inheritance) stubs ────────────────────────────────
+    // â”€â”€ Parent-class (BAU inheritance) stubs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Stubs overridden parent methods using Mockito spy + doReturn for the direct parent.
@@ -474,11 +474,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * Emits comments/notes about parent-class methods. Does NOT stub the methods under test.
      *
      * CRITICAL RULE: the method under test must NEVER be stubbed.
-     *   - Overridden methods (@Override) are ClassA's OWN code being tested → run for real.
+     *   - Overridden methods (@Override) are ClassA's OWN code being tested â†’ run for real.
      *     Stubbing them would mean the test exercises the stub, not the real logic.
-     *   - super.xxx() calls inside an overridden method run the parent's code → control
+     *   - super.xxx() calls inside an overridden method run the parent's code â†’ control
      *     that path via dependency mocks (the parent's deps), not by stubbing the method.
-     *   - Inherited non-overridden methods → emit as commented hints only.
+     *   - Inherited non-overridden methods â†’ emit as commented hints only.
      */
     protected String buildSuperClassStubs(ClassMetadata m, int indent) {
         if (!m.hasSuperClass()) return "";
@@ -488,7 +488,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .map(MethodMetadata::name)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        // ── Overridden methods — DO NOT STUB (they are the methods under test) ──
+        // â”€â”€ Overridden methods â€” DO NOT STUB (they are the methods under test) â”€â”€
         // For super.xxx() calls, the parent logic runs; note it so the developer
         // knows to control the parent's dependencies, not stub the method itself.
         for (MethodMetadata mm : m.overriddenMethods()) {
@@ -496,7 +496,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 for (String superCall : mm.superMethodCalls()) {
                     sb.append(i(indent))
                       .append("// ").append(mm.name()).append("() calls super.").append(superCall)
-                      .append("() — parent ").append(m.superClassName())
+                      .append("() â€” parent ").append(m.superClassName())
                       .append(" logic runs; control it via the parent's dependency mocks above\n");
                 }
             }
@@ -508,7 +508,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .collect(Collectors.toSet());
 
         // Collect all method names actually CALLED from ClassA's own testable methods.
-        // Only inherited methods that ClassA actively invokes need to be stubbed —
+        // Only inherited methods that ClassA actively invokes need to be stubbed â€”
         // if saveRecTxn is never called in ClassA, there is no execution path reaching it
         // and no stub is needed (and it may not even be accessible from the test package).
         Set<String> calledInClassA = m.methods().stream()
@@ -516,7 +516,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .flatMap(mm -> mm.helperMethodCalls().stream())
                 .collect(Collectors.toSet());
 
-        // ── Inherited non-overridden methods — emit as COMMENTS only ───────────
+        // â”€â”€ Inherited non-overridden methods â€” emit as COMMENTS only â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Inherited parent methods are NEVER emitted as active stubs:
         //  - protected-access + package differences can't be reliably resolved
         //  - the method under test is never among these (it's overridden, handled above)
@@ -536,12 +536,12 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 if (!inheritedMethods.isEmpty()) {
                     sb.append(i(indent))
                       .append("// Inherited from ").append(parent.className())
-                      .append(" — uncomment if real parent execution causes issues:\n");
+                      .append(" â€” uncomment if real parent execution causes issues:\n");
                     for (MethodMetadata mm : inheritedMethods) {
                         String matchers = mm.parameters().stream()
                                 .map(p -> mockitoMatcher(p.type()))
                                 .collect(Collectors.joining(", "));
-                        // Always a comment — never active — avoids protected-access compile errors
+                        // Always a comment â€” never active â€” avoids protected-access compile errors
                         sb.append(i(indent)).append("// lenient().")
                           .append(mm.hasReturnValue()
                                 ? "doReturn(" + typedReturnValue(mm.returnType(), m) + ")"
@@ -553,7 +553,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 }
             }
         } else if (m.hasSuperClass()) {
-            // parentChain empty — parent source is outside the scanned source root
+            // parentChain empty â€” parent source is outside the scanned source root
             // (e.g. framework class like RouteBuilder, or external library)
             sb.append(i(indent))
               .append("// Parent ").append(m.superClassName())
@@ -595,15 +595,15 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     }
 
     /**
-     * Returns a typed return value — always using inline new Type() with field setters.
-     * No TestData class references — everything self-contained in the test.
+     * Returns a typed return value â€” always using inline new Type() with field setters.
+     * No TestData class references â€” everything self-contained in the test.
      */
     private String typedReturnValue(String rawReturnType, ClassMetadata m) {
         String rawType = rawReturnType.replaceAll("<.*>", "").trim();
         String base    = defaultValue(rawReturnType);
         if (!base.startsWith("null")) return base; // primitive / standard type
 
-        // Always use new Type() — no TestData file references
+        // Always use new Type() â€” no TestData file references
         if ((m.concreteClassNames() != null && m.concreteClassNames().contains(rawType))
                 || (m.paramTypeRegistry() != null && m.paramTypeRegistry().containsKey(rawType))) {
             return "new " + rawType + "()";
@@ -611,7 +611,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return "null";
     }
 
-    // ── @BeforeEach ─────────────────────────────────────────────────────────
+    // â”€â”€ @BeforeEach â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Determines whether to use spy() or @InjectMocks for the Unit nested class.
@@ -619,17 +619,17 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * spy() is needed when there are actual method calls in the class body that
      * must be intercepted to isolate the logic under test:
      *
-     *   a) super.xxx() calls — delegate to parent; must be stubbed on spy to prevent
+     *   a) super.xxx() calls â€” delegate to parent; must be stubbed on spy to prevent
      *      real parent execution (regardless of whether a superclass exists)
      *
-     *   b) internal method calls — calls to other methods declared in THIS class;
+     *   b) internal method calls â€” calls to other methods declared in THIS class;
      *      must be stubbed on spy so only the entry-point logic is exercised
-     *      (structural detection — no name-prefix restriction)
+     *      (structural detection â€” no name-prefix restriction)
      *
      * @InjectMocks is sufficient when NEITHER applies:
      *   - No super calls, no internal helper calls
      *   - Works even without a no-arg constructor (Mockito handles injection)
-     *   - Having a superclass alone is NOT enough — only spy if there are actual calls
+     *   - Having a superclass alone is NOT enough â€” only spy if there are actual calls
      */
     protected boolean requiresSpyPattern(ClassMetadata m) {
         // a) any method body contains super.xxx() calls
@@ -637,7 +637,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         if (hasSuperCalls) return true;
 
         // b) any testable method calls other public/protected methods in THIS class
-        // (private methods can't be stubbed by Mockito — spy only helps for public/protected helpers)
+        // (private methods can't be stubbed by Mockito â€” spy only helps for public/protected helpers)
         Set<String> stubbableOwnMethods = m.methods().stream()
                 .filter(mm -> mm.isPublic() || mm.isProtected())
                 .map(MethodMetadata::name)
@@ -653,8 +653,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * When @InjectMocks is used, also emits the @InjectMocks annotation.
      */
     protected String buildSubjectDeclaration(ClassMetadata m, int indent) {
-        // Use TestableClassName when the subclass is generated (widens protected methods)
-        String typeName = needsTestablSubclass(m) ? testableName(m) : m.className();
+        String typeName = m.className();
         if (requiresSpyPattern(m)) {
             return i(indent) + "private " + typeName + " subject;\n\n";
         } else {
@@ -677,10 +676,8 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("void setUp() throws Exception {\n");
 
         if (useSpy) {
-            // Use TestableClassName when it was generated (widens protected parent methods)
-            String spyType = needsTestablSubclass(m) ? testableName(m) : m.className();
-            sb.append(i(indent + 1)).append(spyType).append(" rawSpy = new ").append(spyType).append("();\n");
-            sb.append(i(indent + 1)).append(subject).append(" = spy(rawSpy);\n\n");
+            sb.append(i(indent + 1)).append(subject).append(" = spy(new ")
+              .append(m.className()).append("());\n\n");
 
             // Private method isolation: identify which injected deps private methods use.
             // Private methods run naturally when public methods are called.
@@ -700,7 +697,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 sb.append(i(indent + 1)).append("// ").append(String.join(", ", privateDeps)).append("\n\n");
             }
 
-            // Inject only the mocks we actually declared (the called ones) — keeps
+            // Inject only the mocks we actually declared (the called ones) â€” keeps
             // setUp consistent with the @Mock fields and avoids referencing undeclared vars.
             Set<String> declaredMocks = calledFieldNames(m);
             for (FieldMetadata f : m.mockCandidates()) {
@@ -710,7 +707,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 }
             }
         }
-        // For @InjectMocks: Mockito extension handles injection — nothing to do here
+        // For @InjectMocks: Mockito extension handles injection â€” nothing to do here
 
         // @Value fields
         for (FieldMetadata f : m.valueFields()) {
@@ -726,14 +723,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(buildRepositoryStubs(m, indent + 1));
 
         if (useSpy) {
-            // If using testable subclass, inject service-locator mocks via _mockDaos map
-            if (needsTestablSubclass(m) && m.hasServiceLocatorRepos()) {
-                sb.append(i(indent + 1)).append("// Inject service-locator mocks into testable subclass\n");
-                for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
-                    sb.append(i(indent + 1)).append("((").append(testableName(m)).append(") rawSpy)._mockDaos.put(")
-                      .append(sla.repoType()).append(".BEAN_ID, ").append(sla.fieldName()).append(");\n");
-                }
-            } else if (m.hasServiceLocatorRepos()) {
+            // Service-locator stubs are emitted only when the locator method is
+            // ClassA's own (accessible). Parent-inherited protected locators are
+            // left alone â€” execution safety over a fragile, uncompilable stub.
+            if (m.hasServiceLocatorRepos()) {
                 sb.append(buildServiceLocatorStubs(m, subject, indent + 1));
             }
             // Stub internal helpers on spy (Pattern D)
@@ -748,25 +741,25 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .anyMatch(mm -> mm.annotations().contains("PostConstruct"));
         if (hasPostConstruct) {
             sb.append(i(indent + 1))
-              .append("// @PostConstruct runs on Spring init — verify any side effects below\n");
+              .append("// @PostConstruct runs on Spring init â€” verify any side effects below\n");
         }
 
         sb.append(i(indent)).append("}\n\n");
         return sb.toString();
     }
 
-    // ── Generic accessibility helper ────────────────────────────────────────
+    // â”€â”€ Generic accessibility helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Returns true only if methodName is declared in ClassA's OWN public/protected methods.
      *
      * Generic rule applied to ALL active lenient() stubs:
      *   lenient().when(subject).method() compiles ONLY when 'method' belongs to
-     *   ClassA itself — because the test class is in ClassA's package.
+     *   ClassA itself â€” because the test class is in ClassA's package.
      *
      *   Inherited methods (from parent ClassB in a different package) with protected
      *   access are NOT callable from the test class, causing compile errors.
-     *   → emit as a comment instead of active code.
+     *   â†’ emit as a comment instead of active code.
      */
     protected boolean isOwnAccessibleMethod(String methodName, ClassMetadata m) {
         return m.methods().stream()
@@ -774,32 +767,31 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .anyMatch(mm -> mm.name().equals(methodName));
     }
 
-    // ── Service-locator repo stubs ──────────────────────────────────────────
+    // â”€â”€ Service-locator repo stubs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Stubs service-locator calls (makeDAO / factory methods) on the spy to return
      * the mocked @Repository instead of hitting the real service locator at runtime.
      *
      *   TPIBFTPayeeRepo repo = (TPIBFTPayeeRepo) makeDAO(BEAN_ID)
-     *   →  lenient().doReturn(tpibFTPayeeRepo).when(subject).makeDAO(any());
+     *   â†’  lenient().doReturn(tpibFTPayeeRepo).when(subject).makeDAO(any());
      */
     protected String buildServiceLocatorStubs(ClassMetadata m, String subject, int indent) {
         if (!m.hasServiceLocatorRepos() && !m.hasAppContextRepos()) return "";
         StringBuilder sb = new StringBuilder();
-        sb.append(i(indent)).append("// Service-locator stubs — return mocked @Repository instead of real DAO\n");
+        sb.append(i(indent)).append("// Service-locator stubs â€” return mocked @Repository instead of real DAO\n");
         for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
-            // Stub the service-locator method (e.g. makeDAO) on the spy.
-            // If makeDAO is from a parent class (protected, different package), calling
-            // subject.makeDAO() from the test won't compile — emit as a comment.
-            // Only stub when the locator method is ClassA's own (accessible from test).
-            // Parent-inherited locators are handled via the testable subclass _mockDaos map.
+            // Stub the service-locator method (e.g. makeDAO) on the spy ONLY when it is
+            // ClassA's own (accessible) method. A parent-inherited protected locator can't
+            // be referenced from the test without a fragile subclass override, so it is
+            // left as the real call (execution safety over an uncompilable stub).
             if (isOwnAccessibleMethod(sla.locatorMethod(), m)) {
                 sb.append(i(indent)).append("lenient().doReturn(").append(sla.fieldName())
                   .append(").when(").append(subject).append(").").append(sla.locatorMethod())
                   .append("(any());\n");
             }
 
-            // Stub each detected method call on the repo — prevents NPE and covers DB call lines
+            // Stub each detected method call on the repo â€” prevents NPE and covers DB call lines
             for (com.testgen.parser.ServiceLocatorAccess.RepoCall call : sla.repoCalls()) {
                 String matchers = call.params().stream()
                         .map(p -> mockitoMatcher(p.type()))
@@ -815,7 +807,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         // Layer 2: ApplicationContext.getBean(X.class) stubs
         // Stub applicationContext mock to return specific type mocks when requested by type
         if (m.hasAppContextRepos()) {
-            sb.append(i(indent)).append("// AppContext pattern: stub getBean(X.class) → specific mock\n");
+            sb.append(i(indent)).append("// AppContext pattern: stub getBean(X.class) â†’ specific mock\n");
             String ctxField = m.fields().stream()
                     .filter(com.testgen.parser.FieldMetadata::isApplicationContext)
                     .map(com.testgen.parser.FieldMetadata::name)
@@ -844,7 +836,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      * Returns a compilable return value for a repository mock stub.
      *
      * For collection/optional types: return empty instances.
-     * For single entity/domain types: use mock(Type.class) — always compiles,
+     * For single entity/domain types: use mock(Type.class) â€” always compiles,
      *   prevents JPA lifecycle hooks, doesn't require a TestData class to exist.
      * For primitives: use typed literals.
      */
@@ -852,7 +844,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         if (returnType == null || returnType.isBlank()) return "null";
         String raw = returnType.replaceAll("<.*>", "").trim();
 
-        // Extract the inner type for generics (e.g. "Optional<TPIBCasCounter>" → "TPIBCasCounter")
+        // Extract the inner type for generics (e.g. "Optional<TPIBCasCounter>" â†’ "TPIBCasCounter")
         String inner = returnType.contains("<")
                 ? returnType.substring(returnType.indexOf('<') + 1, returnType.lastIndexOf('>')).trim()
                 : null;
@@ -871,12 +863,12 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             default -> {
                 if (!raw.isEmpty() && Character.isUpperCase(raw.charAt(0))) {
                     // concreteClassNames contains ONLY non-interface, non-abstract classes.
-                    // @Repository interfaces are NOT in concreteClassNames — they get mock().
-                    // Plain entity/DTO classes ARE in concreteClassNames — they get TestData.
+                    // @Repository interfaces are NOT in concreteClassNames â€” they get mock().
+                    // Plain entity/DTO classes ARE in concreteClassNames â€” they get TestData.
                     if (m.concreteClassNames() != null && m.concreteClassNames().contains(raw)) {
                         yield "new " + raw + "()";
                     }
-                    // Interface, abstract class, @Repository, external type → always mock()
+                    // Interface, abstract class, @Repository, external type â†’ always mock()
                     yield "mock(" + raw + ".class)";
                 }
                 yield "null";
@@ -884,7 +876,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         };
     }
 
-    // ── Pattern D: internal helper method stubs ──────────────────────────────
+    // â”€â”€ Pattern D: internal helper method stubs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Stubs internal helper methods (populate/build/create/map/assemble prefix) on the spy
@@ -930,7 +922,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
-    // ── Repository field stubs ──────────────────────────────────────────────
+    // â”€â”€ Repository field stubs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * For every injected field whose simple type ends with "Repository",
@@ -944,7 +936,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         if (repos.isEmpty()) return "";
 
         StringBuilder sb = new StringBuilder();
-        sb.append(i(indent)).append("// Repository stubs — JPA mocks return null by default; configure as needed\n");
+        sb.append(i(indent)).append("// Repository stubs â€” JPA mocks return null by default; configure as needed\n");
         for (FieldMetadata f : repos) {
             String mock = f.name();
             String entity = f.simpleType().replace("Repository", "");
@@ -961,7 +953,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
-    // ── Wire @Nested (shared across all strategies) ─────────────────────────
+    // â”€â”€ Wire @Nested (shared across all strategies) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     protected String buildWireNested(ClassMetadata m, String subjectDecl, int indent) {
         StringBuilder sb = new StringBuilder();
@@ -983,13 +975,13 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
-    // ── Pattern C: branch tests (conditional logic) ─────────────────────────
+    // â”€â”€ Pattern C: branch tests (conditional logic) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     protected String buildBranchTests(MethodMetadata mm, String subject,
                                        ClassMetadata m, int indent) {
         // Only generate a branch test when a REAL condition scenario was detected:
         // a parameter field is checked, a concrete value can be assigned, and the
-        // two branches differ. No scenario → no branch test (avoids fake/empty tests).
+        // two branches differ. No scenario â†’ no branch test (avoids fake/empty tests).
         if (!mm.hasConditionScenarios()) return "";
         com.testgen.parser.ConditionScenario sc = mm.conditionScenarios().get(0);
         // Need a settable field value on both sides to be meaningful
@@ -1000,7 +992,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         StringBuilder sb = new StringBuilder();
         String throwsDecl = checkedThrowsClause(mm);
 
-        // Single representative branch test — the TRUE path (the more interesting one).
+        // Single representative branch test â€” the TRUE path (the more interesting one).
         String trueName = convention.unitTestMethod(mm.name(), "when_" + sc.trueLabel(), buildParamSuffix(mm));
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ").append(trueName).append("()").append(throwsDecl).append(" {\n");
@@ -1016,7 +1008,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
-    // ── Pattern G: boundary tests (numeric/comparison) ──────────────────────
+    // â”€â”€ Pattern G: boundary tests (numeric/comparison) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     protected String buildBoundaryTests(MethodMetadata mm, String subject,
                                          ClassMetadata m, int indent) {
@@ -1043,7 +1035,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
-    // ── Pattern A: static dependency mock tests ─────────────────────────────
+    // â”€â”€ Pattern A: static dependency mock tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     // JDK classes that should NEVER be mocked statically
     private static final Set<String> JDK_CLASSES = Set.of(
@@ -1063,7 +1055,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 || m.resolvedStaticTypes() == null) return "";
 
         // Pick the FIRST static class that has a RESOLVED (known) non-void method.
-        // No resolved method → no static test (never mock blindly, never JDK).
+        // No resolved method â†’ no static test (never mock blindly, never JDK).
         for (String staticClass : mm.staticCallClasses()) {
             if (JDK_CLASSES.contains(staticClass)) continue;
 
@@ -1112,7 +1104,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return "";
     }
 
-    // ── @Entity MockedConstruction test ─────────────────────────────────────
+    // â”€â”€ @Entity MockedConstruction test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Generates a test that intercepts inline 'new EntityClass()' constructions
@@ -1138,7 +1130,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ").append(testName).append("()").append(throwsDecl).append(" {\n");
         sb.append(i(indent + 1))
-          .append("// @Entity types are created inline — MockedConstruction intercepts new X()\n");
+          .append("// @Entity types are created inline â€” MockedConstruction intercepts new X()\n");
         sb.append(i(indent + 1))
           .append("// preventing JPA lifecycle hooks / validators from firing during unit test\n");
 
@@ -1155,14 +1147,14 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         buildParamSetup(mm, sb, bodyIndent, m.concreteClassNames(), m.paramTypeRegistry());
         if (!mm.isProtected()) buildDirectCall(mm, subject, sb, bodyIndent);
 
-        // Capture and assert on mocked entity — guard against IndexOutOfBoundsException:
+        // Capture and assert on mocked entity â€” guard against IndexOutOfBoundsException:
         // constructed() is empty if the method threw before reaching 'new EntityType()'
         for (String entityType : methodEntityTypes) {
             sb.append(i(bodyIndent)).append("// Safe access: verify entity was actually constructed\n");
             sb.append(i(bodyIndent))
               .append("assertFalse(mocked").append(entityType)
               .append(".constructed().isEmpty(), \"Expected new ").append(entityType)
-              .append("() to be called — check method conditions\");\n");
+              .append("() to be called â€” check method conditions\");\n");
             sb.append(i(bodyIndent)).append(entityType).append(" mocked = mocked")
               .append(entityType).append(".constructed().get(0);\n");
             sb.append(i(bodyIndent)).append("assertNotNull(mocked);\n");
@@ -1178,139 +1170,29 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
-    // ── Testable subclass generation ────────────────────────────────────────
+    // â”€â”€ Testable subclass generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
-     * Returns true when a testable subclass is needed because:
-     * - The class has protected methods from a different-package parent that are
-     *   called by ClassA's own code (need widening to public for test access)
-     * - OR the service-locator method (makeDAO) is inherited protected and cannot
-     *   be called directly from the test
+     * Testable subclass generation is DISABLED.
+     *
+     * Why: generating @Override stubs for protected parent methods guesses their
+     * signature (return type / params / throws). Any mismatch with the real parent
+     * method is a hard compile error in the generated test. The _mockDaos / makeDAO
+     * override had the same problem and was effectively dead.
+     *
+     * It is also unnecessary: a class's OWN code can call its inherited protected
+     * methods directly (Java access rules), so when ClassA's public method runs it
+     * naturally reaches its protected parent methods â€” the test never needs to call
+     * or widen them. We favour guaranteed compilation (execution safety) over the
+     * marginal coverage a fragile subclass would add.
      */
     protected boolean needsTestablSubclass(ClassMetadata m) {
-        if (!m.hasSuperClass()) return false;
-
-        // Service locator from parent — makeDAO can't be called from test package
-        if (m.hasServiceLocatorRepos()) {
-            boolean locatorFromParent = m.serviceLocatorRepos().stream()
-                    .anyMatch(sla -> !isOwnAccessibleMethod(sla.locatorMethod(), m));
-            if (locatorFromParent) return true;
-        }
-
-        // Protected parent methods that ClassA calls but are inaccessible from test
-        if (!m.hasParentChain()) return false;
-        Set<String> calledInClassA = m.methods().stream()
-                .filter(MethodMetadata::isTestable)
-                .flatMap(mm -> mm.helperMethodCalls().stream())
-                .collect(Collectors.toSet());
-        return m.parentChain().stream().anyMatch(parent -> {
-            boolean samePackage = m.packageName().equals(parent.packageName());
-            if (samePackage) return false;
-            return parent.methods().stream()
-                    .filter(mm -> mm.isProtected() && !mm.isPublic())
-                    .anyMatch(mm -> calledInClassA.contains(mm.name()));
-        });
+        return false;
     }
 
-    /**
-     * Returns "Testable" + className — the type used for the spy subject.
-     */
-    protected String testableName(ClassMetadata m) {
-        return "Testable" + m.className();
-    }
-
-    /**
-     * Generates a static inner testable subclass that:
-     * 1. Widens protected methods from the parent to public so the test can call them
-     * 2. Overrides service-locator (makeDAO) to return injected mock dependencies
-     *
-     * Example:
-     *   static class TestableClassA extends ClassA {
-     *       // Service-locator override — returns injected mocks
-     *       final Map<String,Object> _mockDaos = new HashMap<>();
-     *
-     *       @Override protected Object makeDAO(String beanId) {
-     *           Object m = _mockDaos.get(beanId); return m != null ? m : super.makeDAO(beanId);
-     *       }
-     *
-     *       // Widened protected methods
-     *       @Override public void saveRecTxn(FTBasevo ftBasevo) throws Exception {
-     *           super.saveRecTxn(ftBasevo);
-     *       }
-     *   }
-     */
-    protected String buildTestablSubclass(ClassMetadata m, int indent) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(i(indent)).append("/**\n");
-        sb.append(i(indent)).append(" * Testable subclass — widens protected parent methods to public\n");
-        sb.append(i(indent)).append(" * and overrides service-locator to return injected mock dependencies.\n");
-        sb.append(i(indent)).append(" */\n");
-        sb.append(i(indent)).append("static class ").append(testableName(m)).append(" extends ")
-          .append(m.className()).append(" {\n\n");
-
-        // Service-locator override
-        boolean hasLocatorOverride = m.hasServiceLocatorRepos() && m.serviceLocatorRepos().stream()
-                .anyMatch(sla -> !isOwnAccessibleMethod(sla.locatorMethod(), m));
-        if (hasLocatorOverride) {
-            sb.append(i(indent + 1)).append("// Inject mock DAOs here — used by makeDAO override\n");
-            sb.append(i(indent + 1)).append("final java.util.Map<String, Object> _mockDaos = new java.util.HashMap<>();\n\n");
-
-            // Find the locator method signature from parent chain
-            String locatorMethod = m.serviceLocatorRepos().get(0).locatorMethod();
-            sb.append(i(indent + 1)).append("@Override\n");
-            sb.append(i(indent + 1)).append("protected Object ").append(locatorMethod).append("(String beanId) {\n");
-            sb.append(i(indent + 2)).append("Object mock = _mockDaos.get(beanId);\n");
-            sb.append(i(indent + 2)).append("return mock != null ? mock : null; // return null if not found (avoids real context)\n");
-            sb.append(i(indent + 1)).append("}\n\n");
-        }
-
-        // Widen ALL protected inherited methods from different-package parents.
-        // Visibility rule:
-        //   protected in superclass + test in different package
-        //   → do NOT stub with Mockito (can't call from test package)
-        //   → override here with ISOLATED implementation (no super call)
-        //
-        // Widen ONLY the protected parent methods that ClassA actually calls
-        // (execution safety + no over-generation). Each override just delegates to
-        // super.method() — it widens visibility, it does NOT change behaviour.
-        if (m.hasParentChain()) {
-            Set<String> calledInClassA = m.methods().stream()
-                    .filter(MethodMetadata::isTestable)
-                    .flatMap(mm -> mm.helperMethodCalls().stream())
-                    .collect(Collectors.toSet());
-            Set<String> added = new HashSet<>();
-            for (ClassMetadata parent : m.parentChain()) {
-                if (m.packageName().equals(parent.packageName())) continue;
-                for (MethodMetadata pm : parent.methods()) {
-                    if (!pm.isProtected() || pm.isPublic() || pm.isFinal()) continue;
-                    if (!calledInClassA.contains(pm.name())) continue; // only widen what's used
-                    if (!added.add(pm.name())) continue;
-
-                    String params = pm.parameters().stream()
-                            .map(p -> p.type() + " " + p.name())
-                            .collect(Collectors.joining(", "));
-                    String callArgs = paramNames(pm);
-                    String throwsDecl = pm.throwsExceptions()
-                            ? " throws " + String.join(", ", pm.thrownExceptions()) : "";
-                    sb.append(i(indent + 1)).append("@Override\n");
-                    sb.append(i(indent + 1)).append("public ")
-                      .append(pm.returnType()).append(" ").append(pm.name())
-                      .append("(").append(params).append(")").append(throwsDecl).append(" {\n");
-                    // Delegate to super — widen access only, preserve real behaviour
-                    sb.append(i(indent + 2))
-                      .append(pm.hasReturnValue() ? "return " : "")
-                      .append("super.").append(pm.name()).append("(").append(callArgs).append(");\n");
-                    sb.append(i(indent + 1)).append("}\n\n");
-                }
-            }
-        }
-
-        sb.append(i(indent)).append("}\n\n");
-        return sb.toString();
-    }
 
     /** Returns the name of the best dependency mock to use for triggering an exception.
-     *  Prefers service-locator repos → injected mocks → null if none available. */
+     *  Prefers service-locator repos â†’ injected mocks â†’ null if none available. */
     private String pickExceptionTriggerDep(ClassMetadata m) {
         // Prefer service-locator repos (most likely to be the trigger in BAU code)
         if (m.hasServiceLocatorRepos()) {
@@ -1324,7 +1206,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .orElse(null);
     }
 
-    // ── Pattern H: exception flow test ──────────────────────────────────────
+    // â”€â”€ Pattern H: exception flow test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     protected String buildExceptionFlowTest(MethodMetadata mm, String subject,
                                              ClassMetadata m, int indent) {
@@ -1337,7 +1219,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(i(indent)).append("void ").append(testName).append("() throws Exception {\n");
         buildParamSetup(mm, sb, indent + 1, m.concreteClassNames(), m.paramTypeRegistry());
 
-        // Trigger exception via a DEPENDENCY mock — not via the subject itself.
+        // Trigger exception via a DEPENDENCY mock â€” not via the subject itself.
         // Stubbing the subject would bypass the code under test (testing Mockito, not your code).
         String depForThrow = pickExceptionTriggerDep(m);
         if (depForThrow != null) {
@@ -1350,7 +1232,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         } else {
             sb.append(i(indent + 1))
               .append("// TODO: configure a dependency to throw ").append(exType)
-              .append(" — do NOT stub subject.").append(mm.name()).append("() directly\n");
+              .append(" â€” do NOT stub subject.").append(mm.name()).append("() directly\n");
         }
 
         sb.append(i(indent + 1)).append("assertThrows(").append(exType).append(".class, () ->\n");
@@ -1365,7 +1247,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return sb.toString();
     }
 
-    // ── AOP annotation awareness ────────────────────────────────────────────
+    // â”€â”€ AOP annotation awareness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Emits a single-line comment before a Unit test method when the source method
@@ -1378,7 +1260,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         for (String ann : aop) {
             sb.append(i(indent))
               .append("// NOTE: @").append(ann).append(" (").append(annotationCategory(ann))
-              .append(") is NOT active in Unit layer — verify its behaviour in Functional/Wire\n");
+              .append(") is NOT active in Unit layer â€” verify its behaviour in Functional/Wire\n");
         }
         return sb.toString();
     }
@@ -1400,7 +1282,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 sb.append(i(indent)).append("@Test\n");
                 sb.append(i(indent)).append("void ").append(testName).append("()").append(throwsDecl).append(" {\n");
                 sb.append(i(indent + 1)).append("// @").append(ann)
-                  .append(" — ").append(annotationCategory(ann))
+                  .append(" â€” ").append(annotationCategory(ann))
                   .append(" is active here (Spring proxy wraps subject)\n");
 
                 if (SPRING_AOP_ANNOTATIONS.contains(ann)) {
@@ -1408,15 +1290,15 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 } else if (SECURITY_ANNOTATIONS.contains(ann)) {
                     sb.append(i(indent + 1))
                       .append("// TODO: call subject.").append(mm.name())
-                      .append("(...) with insufficient role → expect AccessDeniedException\n");
+                      .append("(...) with insufficient role â†’ expect AccessDeniedException\n");
                     sb.append(i(indent + 1))
                       .append("// TODO: call subject.").append(mm.name())
-                      .append("(...) with correct role → expect success\n");
+                      .append("(...) with correct role â†’ expect success\n");
                 } else {
                     // custom annotation
                     sb.append(i(indent + 1))
                       .append("// TODO: verify @").append(ann)
-                      .append(" aspect behaviour — e.g. audit log written, metric recorded\n");
+                      .append(" aspect behaviour â€” e.g. audit log written, metric recorded\n");
                     sb.append(i(indent + 1)).append("// subject.").append(mm.name())
                       .append("(").append(buildDefaultParamArgs(mm, m.concreteClassNames())).append(");\n");
                     sb.append(i(indent + 1))
@@ -1446,17 +1328,17 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 sb.append(i(indent)).append("// TODO: assert expected DB state after commit\n\n");
                 sb.append(i(indent)).append("// Verify transaction rolls back on exception\n");
                 sb.append(i(indent))
-                  .append("// TODO: configure mock to throw RuntimeException → assertThrows, then verify rollback\n");
+                  .append("// TODO: configure mock to throw RuntimeException â†’ assertThrows, then verify rollback\n");
             }
             case "Async" -> {
-                sb.append(i(indent)).append("// Async method — returns immediately; use CompletableFuture or CountDownLatch\n");
+                sb.append(i(indent)).append("// Async method â€” returns immediately; use CompletableFuture or CountDownLatch\n");
                 sb.append(i(indent)).append(call).append(";\n");
                 sb.append(i(indent)).append("// TODO: await async completion and assert side-effects\n");
             }
             case "Cacheable", "CachePut" -> {
-                sb.append(i(indent)).append("// First call — cache miss, real method executes\n");
+                sb.append(i(indent)).append("// First call â€” cache miss, real method executes\n");
                 sb.append(i(indent)).append(call).append(";\n");
-                sb.append(i(indent)).append("// Second call — cache hit, real method NOT invoked again\n");
+                sb.append(i(indent)).append("// Second call â€” cache hit, real method NOT invoked again\n");
                 sb.append(i(indent)).append(call).append(";\n");
                 sb.append(i(indent)).append("// TODO: verify(mockDep, times(1)).someMethod(any()); // called once despite two invocations\n");
             }
@@ -1496,7 +1378,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .collect(Collectors.joining(", "));
     }
 
-    // ── Test method generation ──────────────────────────────────────────────
+    // â”€â”€ Test method generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     protected String buildTestMethods(ClassMetadata m, String subject, int indent) {
         StringBuilder sb = new StringBuilder();
@@ -1522,7 +1404,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         }
 
         if (m.hasSuperClass()) {
-            sb.append(i(indent)).append("// Inherited non-overridden methods → covered by ")
+            sb.append(i(indent)).append("// Inherited non-overridden methods â†’ covered by ")
               .append(m.superClassName()).append("Test\n\n");
         }
 
@@ -1531,7 +1413,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             sb.append(i(indent)).append("// --- Interface default methods ---\n\n");
             for (MethodMetadata mm : m.interfaceDefaultMethods()) {
                 sb.append(i(indent))
-                  .append("// Default method from interface — exercised via subject (no override needed)\n");
+                  .append("// Default method from interface â€” exercised via subject (no override needed)\n");
                 sb.append(buildSingleTestMethod(mm, subject, m, indent));
             }
         }
@@ -1545,7 +1427,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         String paramSuffix  = buildParamSuffix(mm);
         String throwsClause = checkedThrowsClause(mm);
 
-        // ── 1 SUCCESS test ────────────────────────────────────────────────
+        // â”€â”€ 1 SUCCESS test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         sb.append(i(indent)).append("@Test\n");
         sb.append(i(indent)).append("void ")
           .append(convention.unitTestMethod(mm.name(), "success", paramSuffix))
@@ -1561,23 +1443,23 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         sb.append(buildSuccessAssertions(mm, m, indent + 1));
         sb.append(i(indent)).append("}\n\n");
 
-        // ── 1 EXCEPTION test — only if we know a concrete dependency method to throw from ──
+        // â”€â”€ 1 EXCEPTION test â€” only if we know a concrete dependency method to throw from â”€â”€
         String primaryException = primaryException(mm);
         if (primaryException != null && pickExceptionTriggerCall(mm, m) != null) {
             sb.append(buildExceptionTestMethod(mm, subject, primaryException, indent, m));
         }
 
-        // ── 1 BRANCH test pair — only for a REAL condition scenario ────────
+        // â”€â”€ 1 BRANCH test pair â€” only for a REAL condition scenario â”€â”€â”€â”€â”€â”€â”€â”€
         if (mm.hasConditionScenarios()) {
             sb.append(buildBranchTests(mm, subject, m, indent));
         }
 
-        // ── 1 BOUNDARY test — only if a numeric comparison was detected ────
+        // â”€â”€ 1 BOUNDARY test â€” only if a numeric comparison was detected â”€â”€â”€â”€
         if (mm.hasNumericComparisons()) {
             sb.append(buildBoundaryTests(mm, subject, m, indent));
         }
 
-        // ── 1 STATIC test — only if a resolved static method call exists ───
+        // â”€â”€ 1 STATIC test â€” only if a resolved static method call exists â”€â”€â”€
         if (mm.hasStaticDependencies() && hasResolvedStaticCall(mm, m)) {
             sb.append(buildStaticMockTests(mm, subject, m, indent));
         }
@@ -1586,7 +1468,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     }
 
     /**
-     * Builds real assertions for the success test — at least one concrete verify/assert,
+     * Builds real assertions for the success test â€” at least one concrete verify/assert,
      * never a TODO:
      *  - verify(...) every injected-field dependency method actually called by mm
      *  - assertNotNull(result) when the method returns a value
@@ -1651,7 +1533,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             String getterRet = resolveParamFieldType(sc.paramType(), sc.fieldName(), m);
             String value = getterRet != null ? defaultValue(getterRet) : null;
             if (value == null || value.startsWith("null")) {
-                // Unknown type → return a deep-stub mock object (non-null) generically
+                // Unknown type â†’ return a deep-stub mock object (non-null) generically
                 value = "mock(Object.class)";
             }
             sb.append(i(indent)).append("when(").append(sc.paramName()).append(".get")
@@ -1767,7 +1649,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     /**
      * Returns [fieldName, methodName, matchers] for a KNOWN dependency call to throw from,
      * or null if no concrete dependency method is known. Never guesses a method name.
-     * Priority: injected-field calls in this method → service-locator → app-context.
+     * Priority: injected-field calls in this method â†’ service-locator â†’ app-context.
      */
     private String[] pickExceptionTriggerCall(MethodMetadata mm, ClassMetadata m) {
         // 1) A method actually called on an injected @Mock field by mm
@@ -1799,10 +1681,10 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return null;
     }
 
-    // ── Auto-init aware assertion/stub hints ────────────────────────────────
+    // â”€â”€ Auto-init aware assertion/stub hints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
-     * Emits commented-out mock stub hints using typed matchers — any(TypeName.class) —
+     * Emits commented-out mock stub hints using typed matchers â€” any(TypeName.class) â€”
      * so developers know exactly which type to match.
      * Only emits hints for domain-object params (non-primitive / non-standard types).
      */
@@ -1813,7 +1695,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .toList();
         if (domainParams.isEmpty()) return;
 
-        sb.append(i(indent)).append("// Stub mock dependencies — use typed matcher for initialized params:\n");
+        sb.append(i(indent)).append("// Stub mock dependencies â€” use typed matcher for initialized params:\n");
         for (MethodMetadata.ParameterMetadata p : domainParams) {
             String rawType = p.type().replaceAll("<.*>", "").trim();
             sb.append(i(indent))
@@ -1829,11 +1711,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                                          StringBuilder sb, int indent) {
         String rawReturn = mm.returnType().replaceAll("<.*>", "").trim();
         if (defaultValue(mm.returnType()).startsWith("null")) {
-            // Return type is a domain object — suggest field assertions
+            // Return type is a domain object â€” suggest field assertions
             com.testgen.parser.ClassMetadata retMeta =
                     m.paramTypeRegistry() != null ? m.paramTypeRegistry().get(rawReturn) : null;
             if (retMeta != null && !retMeta.fields().isEmpty()) {
-                sb.append(i(indent)).append("// Assert result fields (auto-initialized type — update as needed):\n");
+                sb.append(i(indent)).append("// Assert result fields (auto-initialized type â€” update as needed):\n");
                 retMeta.fields().stream()
                         .filter(f -> !f.isInjected() && !f.isApplicationContext() && !f.isValue())
                         .limit(3) // top 3 fields to keep it concise
@@ -1852,7 +1734,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      */
     private void buildVerifyHints(MethodMetadata mm, ClassMetadata m,
                                    StringBuilder sb, int indent) {
-        // Service-locator repo verify hints — actual method names from detection
+        // Service-locator repo verify hints â€” actual method names from detection
         if (m.hasServiceLocatorRepos()) {
             sb.append(i(indent)).append("// Verify service-locator @Repository interactions:\n");
             for (com.testgen.parser.ServiceLocatorAccess sla : m.serviceLocatorRepos()) {
@@ -1890,7 +1772,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     /** Returns an appropriate return-value hint for mock stub setup. */
     private String typedReturnHint(String rawType, ClassMetadata m) {
         if (m.concreteClassNames() != null && m.concreteClassNames().contains(rawType)) {
-            return "new " + rawType + "()"; // inline — no TestData file needed
+            return "new " + rawType + "()"; // inline â€” no TestData file needed
         }
         com.testgen.parser.ClassMetadata meta =
                 m.paramTypeRegistry() != null ? m.paramTypeRegistry().get(rawType) : null;
@@ -1898,12 +1780,12 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return "mock(" + rawType + ".class)";
     }
 
-    // ── Method name disambiguation helpers ─────────────────────────────────
+    // â”€â”€ Method name disambiguation helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Returns a short param-type suffix for overloaded method disambiguation.
      * Empty string when the method has no params or only one param (no collision risk).
-     * e.g. process(MSBaseVO, String) → "MSBaseVO_String"
+     * e.g. process(MSBaseVO, String) â†’ "MSBaseVO_String"
      */
     private String buildParamSuffix(MethodMetadata mm) {
         if (mm.parameters().size() <= 1) return "";
@@ -1929,11 +1811,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .orElse(exceptions.get(0));
     }
 
-    // ── Exception / throws helpers ──────────────────────────────────────────
+    // â”€â”€ Exception / throws helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Returns " throws ExType1, ExType2" if the method declares any thrown exceptions.
-     * If the root Exception (or Throwable) is already in the list it covers everything —
+     * If the root Exception (or Throwable) is already in the list it covers everything â€”
      * simplify to just " throws Exception" to avoid redundant declarations.
      */
     protected String checkedThrowsClause(MethodMetadata mm) {
@@ -1946,18 +1828,18 @@ public abstract class AbstractTestStrategy implements TestStrategy {
         return " throws " + String.join(", ", exceptions);
     }
 
-    // ── Private helpers ─────────────────────────────────────────────────────
+    // â”€â”€ Private helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Generates local variable declarations for each method parameter.
      *
      * Resolution order for domain-object types (non-primitive, non-standard):
      *  1. Type is in concreteClassNames (scanned source root, TestData will be generated)
-     *       → TypeTestData.buildValidType()
+     *       â†’ TypeTestData.buildValidType()
      *  2. Type is in paramTypeRegistry (source found, field metadata available)
-     *       → new TypeName() + typed field setters (one line per field)
+     *       â†’ new TypeName() + typed field setters (one line per field)
      *  3. External / unknown type (not in source root at all)
-     *       → new TypeName() — no-arg constructor; at least avoids NPE
+     *       â†’ new TypeName() â€” no-arg constructor; at least avoids NPE
      */
     private void buildParamSetup(MethodMetadata mm, StringBuilder sb, int indent,
                                   Set<String> concreteClassNames) {
@@ -1973,11 +1855,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
             boolean isDomain = value.startsWith("null"); // non-primitive, non-standard type
 
             if (!isDomain) {
-                // Primitive / standard type → literal value
+                // Primitive / standard type â†’ literal value
                 sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
                   .append(" = ").append(value).append(";\n");
             } else {
-                // Domain VO → mock with RETURNS_DEEP_STUBS (avoids huge new+setter chains).
+                // Domain VO â†’ mock with RETURNS_DEEP_STUBS (avoids huge new+setter chains).
                 // Deep stubs let chained getters (vo.getX().getY()) return non-null safely.
                 sb.append(i(indent)).append(p.type()).append(" ").append(p.name())
                   .append(" = mock(").append(rawType).append(".class, RETURNS_DEEP_STUBS);\n");
@@ -1987,18 +1869,18 @@ public abstract class AbstractTestStrategy implements TestStrategy {
 
     /**
      * Converts a field name to a JavaBeans setter suffix, handling underscores.
-     * e.g. "myField" → "MyField", "my_field" → "MyField"
+     * e.g. "myField" â†’ "MyField", "my_field" â†’ "MyField"
      */
     /**
      * Converts a field name to the JavaBeans setter suffix.
      *
      * Boolean fields starting with 'is' lose the prefix (Lombok convention):
-     *   isHoldRequired  (boolean)  →  HoldRequired   → setHoldRequired
-     *   holdRequired    (boolean)  →  HoldRequired   → setHoldRequired
-     *   isActive        (boolean)  →  Active         → setActive
-     *   transactionId   (String)   →  TransactionId  → setTransactionId
+     *   isHoldRequired  (boolean)  â†’  HoldRequired   â†’ setHoldRequired
+     *   holdRequired    (boolean)  â†’  HoldRequired   â†’ setHoldRequired
+     *   isActive        (boolean)  â†’  Active         â†’ setActive
+     *   transactionId   (String)   â†’  TransactionId  â†’ setTransactionId
      */
-    /** Capitalises the first character — for getter/setter name building. */
+    /** Capitalises the first character â€” for getter/setter name building. */
     private String cap(String s) {
         if (s == null || s.isEmpty()) return s;
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
@@ -2011,11 +1893,11 @@ public abstract class AbstractTestStrategy implements TestStrategy {
     private String toSetterSuffix(String fieldName, String fieldType) {
         if (fieldName == null || fieldName.isEmpty()) return fieldName;
 
-        // Boolean field with 'is' prefix — strip it (Lombok / IDE convention)
+        // Boolean field with 'is' prefix â€” strip it (Lombok / IDE convention)
         boolean isBool = "boolean".equals(fieldType) || "Boolean".equals(fieldType);
         if (isBool && fieldName.startsWith("is") && fieldName.length() > 2
                 && Character.isUpperCase(fieldName.charAt(2))) {
-            return fieldName.substring(2); // isHoldRequired → HoldRequired
+            return fieldName.substring(2); // isHoldRequired â†’ HoldRequired
         }
 
         if (!fieldName.contains("_")) {
@@ -2062,7 +1944,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 .collect(Collectors.joining(", "));
     }
 
-    // ── Test quality filter ──────────────────────────────────────────────────
+    // â”€â”€ Test quality filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Returns true for methods worth generating additional pattern tests (boundary, static, exception).
@@ -2071,7 +1953,7 @@ public abstract class AbstractTestStrategy implements TestStrategy {
      *   - Has conditionals, try/catch, numeric comparisons, static calls, or helper calls
      *   - Not a simple getter (getName) or setter (setName)
      *
-     * Simple getters/setters with no logic → skip pattern tests, just generate the success stub.
+     * Simple getters/setters with no logic â†’ skip pattern tests, just generate the success stub.
      */
     protected boolean isHighValueMethod(MethodMetadata mm) {
         // Explicitly skip simple getter / setter patterns
@@ -2089,25 +1971,25 @@ public abstract class AbstractTestStrategy implements TestStrategy {
                 || mm.parameters().size() > 1;
     }
 
-    // ── Mockito matcher helpers ──────────────────────────────────────────────
+    // â”€â”€ Mockito matcher helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Returns the correct Mockito ArgumentMatcher for a given parameter type.
      *
-     * Primitives require specific matchers — any(int.class) does NOT compile:
-     *   int/Integer   → anyInt()
-     *   long/Long     → anyLong()
-     *   double/Double → anyDouble()
-     *   float/Float   → anyFloat()
-     *   boolean/Bool  → anyBoolean()
-     *   byte/Byte     → anyByte()
-     *   short/Short   → anyShort()
-     *   char/Char     → anyChar()
-     *   String        → anyString()
-     *   Object/other  → any(TypeName.class)
+     * Primitives require specific matchers â€” any(int.class) does NOT compile:
+     *   int/Integer   â†’ anyInt()
+     *   long/Long     â†’ anyLong()
+     *   double/Double â†’ anyDouble()
+     *   float/Float   â†’ anyFloat()
+     *   boolean/Bool  â†’ anyBoolean()
+     *   byte/Byte     â†’ anyByte()
+     *   short/Short   â†’ anyShort()
+     *   char/Char     â†’ anyChar()
+     *   String        â†’ anyString()
+     *   Object/other  â†’ any(TypeName.class)
      */
-    // Only primitives use anyXxx() (any() would NPE on unboxing). All object types —
-    // including String and wrappers — use any(), which also matches null arguments
+    // Only primitives use anyXxx() (any() would NPE on unboxing). All object types â€”
+    // including String and wrappers â€” use any(), which also matches null arguments
     // (deep-stub getters return null for final types; anyString() would not match null).
     protected String mockitoMatcher(String rawType) {
         String type = rawType.replaceAll("<.*>", "").trim();

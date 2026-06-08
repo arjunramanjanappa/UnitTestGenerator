@@ -27,7 +27,6 @@ public class DefaultTestStrategy extends AbstractTestStrategy {
         sb.append(buildDependencyImports(m));
         sb.append("\n");
         sb.append("class ").append(cls).append("Test {\n\n");
-        if (needsTestablSubclass(m)) sb.append(buildTestablSubclass(m, 1));
 
         // Unit nested
         sb.append(i(1)).append("@Nested\n");

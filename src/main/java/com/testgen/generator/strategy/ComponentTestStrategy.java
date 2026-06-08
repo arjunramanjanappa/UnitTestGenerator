@@ -24,7 +24,6 @@ public class ComponentTestStrategy extends AbstractTestStrategy {
         sb.append(buildDependencyImports(m));
         sb.append("\n");
         sb.append("class ").append(cls).append("Test {\n\n");
-        if (needsTestablSubclass(m)) sb.append(buildTestablSubclass(m, 1));
         sb.append(buildUnitNested(m));
         sb.append("}\n");
         return sb.toString();

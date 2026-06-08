@@ -31,7 +31,6 @@ public class ControllerTestStrategy extends AbstractTestStrategy {
         sb.append("import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;\n\n");
 
         sb.append("class ").append(cls).append("Test {\n\n");
-        if (needsTestablSubclass(m)) sb.append(buildTestablSubclass(m, 1));
         sb.append(buildUnitNested(m));
         sb.append("}\n");
         return sb.toString();
